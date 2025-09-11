@@ -73,7 +73,7 @@ cursor.execute("""
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY,
-        date TEXT,          -- armazenado como string para compatibilidade
+        date TEXT,
         description TEXT,
         value REAL,
         account TEXT
@@ -95,7 +95,7 @@ with st.sidebar:
     )
 
 # =====================
-# IMPORTAÇÃO
+# IMPORTAÇÃO (3 colunas fixas: Data, Descrição, Valor)
 # =====================
 if menu == "📥 Importação":
     st.header("Importação de Lançamentos")
@@ -107,72 +107,35 @@ if menu == "📥 Importação":
         st.info("Nenhuma conta cadastrada. Cadastre uma conta na seção ⚙️ Contas antes de importar lançamentos.")
     else:
         conta_escolhida = st.selectbox("Conta/cartão", options=contas_cadastradas)
-        arquivo = st.file_uploader("Selecione o arquivo do extrato ou fatura", type=["xls", "xlsx", "csv"])
+        arquivo = st.file_uploader("Selecione o arquivo (3 colunas: Data, Descrição, Valor)", type=["xls", "xlsx", "csv"])
 
         if arquivo is not None:
-            # Leitura
+            # Leitura simplificada
             try:
                 if arquivo.name.lower().endswith(".csv"):
-                    df = pd.read_csv(arquivo, sep=None, engine="python")
+                    df = pd.read_csv(arquivo, header=None)
                 else:
-                    df = pd.read_excel(arquivo)
+                    df = pd.read_excel(arquivo, header=None)
+                df.columns = ["Data", "Descrição", "Valor"]
             except Exception as e:
                 st.toast(f"Erro ao ler o arquivo: {e} ⚠️", icon="⚠️")
                 st.stop()
 
-            # Seleção de colunas
-            colunas = df.columns.tolist()
-            st.markdown("### Mapeamento de colunas")
-            data_col = st.selectbox("Coluna de Data", options=colunas, key="import_data_col")
-            desc_col = st.selectbox("Coluna de Descrição", options=colunas, key="import_desc_col")
+            # Remove linhas "SALDO"
+            df_filtrado = df[~df["Descrição"].astype(str).str.strip().str.upper().str.startswith("SALDO")]
 
-            # Valor único OU Débito/Crédito
-            if ("Débito" in colunas or "Debito" in colunas) and ("Crédito" in colunas or "Credito" in colunas):
-                deb_col = st.selectbox("Coluna de Débito", options=colunas, key="import_deb_col")
-                cred_col = st.selectbox("Coluna de Crédito", options=colunas, key="import_cred_col")
-                valor_col = None
-            else:
-                valor_col = st.selectbox("Coluna de Valor (+/–)", options=colunas, key="import_val_col")
-                deb_col, cred_col = None, None
-
-            # Pré-visualização sem SALDO
-            try:
-                df_filtrado = df[~df[desc_col].astype(str).str.strip().str.upper().str.startswith("SALDO")]
-            except Exception:
-                st.toast("A coluna de descrição selecionada não pôde ser processada ⚠️", icon="⚠️")
-                st.stop()
-
-            preview = []
-            for _, row in df_filtrado.iterrows():
-                data_str = str(row[data_col])
-                descricao = str(row[desc_col])
-
-                if valor_col is not None:
-                    raw_val = row[valor_col]
-                    valor = float(raw_val) if pd.notna(raw_val) else 0.0
-                else:
-                    valor = 0.0
-                    if pd.notna(row[cred_col]):
-                        valor += float(row[cred_col])
-                    if pd.notna(row[deb_col]):
-                        valor -= float(row[deb_col])
-
-                preview.append({"Data": data_str, "Descrição": descricao, "Valor": valor, "Conta": conta_escolhida})
-
-            df_preview = pd.DataFrame(preview)
-
-            st.markdown("### Pré-visualização (linhas SALDO removidas)")
-            st.dataframe(df_preview.head(30), use_container_width=True)
+            st.markdown("### Pré-visualização")
+            st.dataframe(df_filtrado.head(30), use_container_width=True)
 
             if st.button(f"Importar para {conta_escolhida}"):
                 try:
-                    for _, row in df_preview.iterrows():
+                    for _, row in df_filtrado.iterrows():
                         cursor.execute(
                             "INSERT INTO transactions (date, description, value, account) VALUES (?, ?, ?, ?)",
-                            (row["Data"], row["Descrição"], float(row["Valor"]), row["Conta"])
+                            (str(row["Data"]), str(row["Descrição"]), float(row["Valor"]), conta_escolhida)
                         )
                     conn.commit()
-                    st.toast(f"{len(df_preview)} lançamentos importados para {conta_escolhida} 💰", icon="📥")
+                    st.toast(f"{len(df_filtrado)} lançamentos importados para {conta_escolhida} 💰", icon="📥")
                 except Exception as e:
                     st.toast(f"Falha na importação: {e} ⚠️", icon="⚠️")
 
@@ -217,7 +180,6 @@ elif menu == "⚙️ Contas":
     if df_contas.empty:
         st.info("Nenhuma conta cadastrada ainda.")
     else:
-        # Grid somente leitura (edição via formulário explícito abaixo)
         gb = GridOptionsBuilder.from_dataframe(df_contas)
         gb.configure_default_column(editable=False)
         gb.configure_selection(selection_mode="multiple", use_checkbox=True)
@@ -232,19 +194,14 @@ elif menu == "⚙️ Contas":
             theme="balham"
         )
 
-        # Normalizar seleção para lista de dicts
         selected_rows = grid.get("selected_rows", [])
         if isinstance(selected_rows, pd.DataFrame):
             selected_rows = selected_rows.to_dict("records")
         nomes_sel = [r.get("Conta") for r in selected_rows] if selected_rows else []
 
-        # --- EDITAR (seleção única)
+        # --- EDITAR (uma conta por vez)
         st.subheader("Editar conta")
-        if len(nomes_sel) == 0:
-            st.caption("Selecione uma conta no grid para editar.")
-        elif len(nomes_sel) > 1:
-            st.caption("Selecione apenas **uma** conta para editar.")
-        else:
+        if len(nomes_sel) == 1:
             old_name = nomes_sel[0]
             new_name = st.text_input("Novo nome", value=old_name, key=f"edit_{old_name}")
             if st.button("Salvar alteração"):
@@ -262,12 +219,14 @@ elif menu == "⚙️ Contas":
                         st.rerun()
                     except sqlite3.IntegrityError:
                         st.toast(f"Já existe uma conta chamada '{new_name_clean}' ⚠️", icon="⚠️")
-
-        # --- EXCLUIR (seleção múltipla, simples)
-        st.subheader("Excluir contas")
-        if not nomes_sel:
-            st.caption("Selecione uma ou mais contas no grid para excluir.")
+        elif len(nomes_sel) > 1:
+            st.caption("Selecione apenas **uma** conta para editar.")
         else:
+            st.caption("Selecione uma conta no grid para editar.")
+
+        # --- EXCLUIR (múltiplas contas)
+        st.subheader("Excluir contas")
+        if nomes_sel:
             if st.button("Excluir selecionadas"):
                 try:
                     for nome in nomes_sel:
@@ -278,6 +237,8 @@ elif menu == "⚙️ Contas":
                     st.rerun()
                 except Exception as e:
                     st.toast(f"Erro ao excluir: {e} ⚠️", icon="⚠️")
+        else:
+            st.caption("Selecione uma ou mais contas no grid para excluir.")
 
     # --- Adicionar nova conta
     st.subheader("Adicionar nova conta")
