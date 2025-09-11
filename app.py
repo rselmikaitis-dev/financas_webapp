@@ -62,7 +62,6 @@ cursor.execute("""
         nome TEXT UNIQUE
     )
 """)
-# Garantir coluna dia_vencimento
 try:
     cursor.execute("ALTER TABLE contas ADD COLUMN dia_vencimento INTEGER")
 except sqlite3.OperationalError:
@@ -86,31 +85,24 @@ def parse_money(val) -> float | None:
     if pd.isna(val):
         return None
     s = str(val).strip().upper()
-
     if s in ["", "NAN", "NONE"]:
         return None
 
     neg = False
-
-    # Trailing negativo (ex: 20741,12-)
     if s.endswith("-"):
         neg = True
         s = s[:-1].strip()
-
-    # Extratos que usam "CR" ou "DÉB"
     if s.endswith("CR"):
         s = s.replace("CR", "").strip()
     elif s.endswith("DB") or "DÉB" in s:
         neg = True
         s = s.replace("DB", "").replace("DÉB", "").strip()
 
-    # Valores com vírgula decimal e ponto de milhar
     s = re.sub(r"[^\d,.-]", "", s)
     if "," in s and "." in s:
         s = s.replace(".", "").replace(",", ".")
     elif "," in s:
         s = s.replace(",", ".")
-
     try:
         num = float(s)
     except ValueError:
@@ -124,8 +116,8 @@ def parse_money(val) -> float | None:
 with st.sidebar:
     menu = option_menu(
         "Menu",
-        ["📊 Dashboard", "📥 Importação", "⚙️ Contas"],
-        icons=["bar-chart", "cloud-upload", "gear"],
+        ["📊 Dashboard", "📑 Lançamentos", "📥 Importação", "⚙️ Contas"],
+        icons=["bar-chart", "list-columns", "cloud-upload", "gear"],
         menu_icon="cast",
         default_index=0,
         orientation="vertical"
@@ -141,18 +133,14 @@ if menu == "📊 Dashboard":
     if df_lanc.empty:
         st.info("Nenhum lançamento encontrado.")
     else:
-        # Seleção de mês e ano
         col1, col2 = st.columns(2)
         with col1:
             mes_sel = st.number_input("Mês", min_value=1, max_value=12, value=datetime.today().month)
         with col2:
             ano_sel = st.number_input("Ano", min_value=2000, max_value=2100, value=datetime.today().year)
 
-        # Converter datas
         df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
         df_lanc = df_lanc.dropna(subset=["date"])
-
-        # Filtro por mês/ano
         df_mes = df_lanc[(df_lanc["date"].dt.month == mes_sel) & (df_lanc["date"].dt.year == ano_sel)]
 
         if df_mes.empty:
@@ -168,11 +156,34 @@ if menu == "📊 Dashboard":
             col2.metric("Saídas", f"R$ {saidas:,.2f}")
             col3.metric("Saldo", f"R$ {saldo:,.2f}")
 
-            st.subheader("Lançamentos do período")
-            st.dataframe(
-                df_mes.sort_values("date", ascending=False),
-                use_container_width=True
-            )
+# =====================
+# LANÇAMENTOS
+# =====================
+elif menu == "📑 Lançamentos":
+    st.header("📑 Lançamentos por período")
+
+    data_ref = st.date_input("Escolha uma data do mês", datetime.today())
+    mes_ref = data_ref.month
+    ano_ref = data_ref.year
+
+    contas = ["Todas"] + [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
+    conta_sel = st.selectbox("Filtrar por conta", contas)
+
+    df_lanc = pd.read_sql_query("SELECT date, description, value, account FROM transactions", conn)
+    df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
+    df_lanc = df_lanc.dropna(subset=["date"])
+
+    df_filtrado = df_lanc[(df_lanc["date"].dt.month == mes_ref) & (df_lanc["date"].dt.year == ano_ref)]
+    if conta_sel != "Todas":
+        df_filtrado = df_filtrado[df_filtrado["account"] == conta_sel]
+
+    if df_filtrado.empty:
+        st.warning(f"Nenhum lançamento encontrado para {mes_ref:02d}/{ano_ref}.")
+    else:
+        st.dataframe(
+            df_filtrado.sort_values("date", ascending=True),
+            use_container_width=True
+        )
 
 # =====================
 # IMPORTAÇÃO
@@ -211,35 +222,33 @@ elif menu == "📥 Importação":
                 if arquivo.name.lower().endswith(".csv"):
                     df = pd.read_csv(arquivo, sep=None, engine="python")
                 elif arquivo.name.lower().endswith(".xls"):
-                    df = pd.read_excel(arquivo, engine="xlrd")
+                    try:
+                        df = pd.read_excel(arquivo)  # pode falhar
+                    except Exception:
+                        dfs = pd.read_html(arquivo)
+                        df = dfs[0]
                 else:
                     df = pd.read_excel(arquivo, engine="openpyxl")
 
                 df = df.iloc[:, :3]
                 df.columns = ["Data", "Descrição", "Valor"]
-
-                # Normalizar data para ISO antes de salvar
                 df["Data"] = pd.to_datetime(df["Data"], errors="coerce", dayfirst=True)
                 df["Data"] = df["Data"].dt.strftime("%Y-%m-%d")
-
                 df["ValorNum"] = df["Valor"].apply(parse_money)
             except Exception as e:
                 st.toast(f"Erro ao ler/normalizar o arquivo: {e} ⚠️", icon="⚠️")
                 st.stop()
 
-            # Filtrar apenas linhas válidas
             mask_not_saldo = ~df["Descrição"].astype(str).str.strip().str.upper().eq("SALDO")
             mask_val_ok = df["ValorNum"].notna()
             df_filtrado = df.loc[mask_not_saldo & mask_val_ok, ["Data", "Descrição", "ValorNum"]].copy()
             df_filtrado.rename(columns={"ValorNum": "Valor"}, inplace=True)
 
-            # Mostrar linhas descartadas
             descartadas = df.loc[~mask_not_saldo | ~mask_val_ok]
             if not descartadas.empty:
                 st.warning(f"{len(descartadas)} linhas foram descartadas (SALDO ou valor inválido).")
                 st.dataframe(descartadas.head(10))
 
-            # Ajustes para cartão de crédito
             if conta_escolhida.lower().startswith("cartão de crédito"):
                 if data_vencimento:
                     df_filtrado["Data"] = pd.to_datetime(data_vencimento).strftime("%Y-%m-%d")
@@ -297,7 +306,6 @@ elif menu == "⚙️ Contas":
             selected_rows = selected_rows.to_dict("records")
         nomes_sel = [r.get("Conta") for r in selected_rows] if selected_rows else []
 
-        # Editar
         st.subheader("Editar conta")
         if len(nomes_sel) == 1:
             old_name = nomes_sel[0]
@@ -308,17 +316,16 @@ elif menu == "⚙️ Contas":
             new_name = st.text_input("Novo nome", value=old_name, key=f"edit_{old_name}")
             new_dia = None
             if old_name.lower().startswith("cartão de crédito") or new_name.lower().startswith("cartão de crédito"):
-                new_dia = st.number_input(
-                    "Dia do vencimento",
-                    min_value=1, max_value=31,
-                    value=int(venc_atual) if venc_atual else 1
-                )
+                new_dia = st.number_input("Dia do vencimento", min_value=1, max_value=31,
+                                          value=int(venc_atual) if venc_atual else 1)
 
             if st.button("Salvar alteração"):
                 new_name_clean = new_name.strip()
                 try:
-                    cursor.execute("UPDATE contas SET nome=?, dia_vencimento=? WHERE nome=?", (new_name_clean, new_dia, old_name))
-                    cursor.execute("UPDATE transactions SET account=? WHERE account=?", (new_name_clean, old_name))
+                    cursor.execute("UPDATE contas SET nome=?, dia_vencimento=? WHERE nome=?",
+                                   (new_name_clean, new_dia, old_name))
+                    cursor.execute("UPDATE transactions SET account=? WHERE account=?",
+                                   (new_name_clean, old_name))
                     conn.commit()
                     st.toast(f"Conta atualizada: '{old_name}' → '{new_name_clean}' ✅", icon="✏️")
                     st.rerun()
@@ -329,7 +336,6 @@ elif menu == "⚙️ Contas":
         else:
             st.caption("Selecione uma conta no grid para editar.")
 
-        # Excluir
         st.subheader("Excluir contas")
         if nomes_sel:
             if st.button("Excluir selecionadas"):
@@ -345,7 +351,6 @@ elif menu == "⚙️ Contas":
         else:
             st.caption("Selecione uma ou mais contas no grid para excluir.")
 
-    # Adicionar
     st.subheader("Adicionar nova conta")
     nova = st.text_input("Nome da nova conta:")
     dia_venc = None
@@ -355,7 +360,8 @@ elif menu == "⚙️ Contas":
     if st.button("Adicionar conta"):
         if nova.strip():
             try:
-                cursor.execute("INSERT INTO contas (nome, dia_vencimento) VALUES (?, ?)", (nova.strip(), dia_venc))
+                cursor.execute("INSERT INTO contas (nome, dia_vencimento) VALUES (?, ?)",
+                               (nova.strip(), dia_venc))
                 conn.commit()
                 st.toast(f"Conta '{nova.strip()}' adicionada ➕", icon="💳")
                 st.rerun()
