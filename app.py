@@ -112,7 +112,10 @@ with tab1:
         if df is not None and not df.empty:
             st.write("Prévia dos dados (selecione as linhas para importar):")
 
-            # Grid interativo com seleção
+            # Inicializar seleção no estado da sessão
+            if "selected_rows" not in st.session_state:
+                st.session_state["selected_rows"] = []
+
             gb = GridOptionsBuilder.from_dataframe(df.head(500))
             gb.configure_selection(selection_mode="multiple", use_checkbox=True)
             grid_options = gb.build()
@@ -127,10 +130,24 @@ with tab1:
                 height=400,
             )
 
-            selected_rows = pd.DataFrame(grid_response["selected_rows"])
+            # Atualizar seleção
+            st.session_state["selected_rows"] = grid_response["selected_rows"]
+            selected_rows = pd.DataFrame(st.session_state["selected_rows"])
+
+            # Botões de controle
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Selecionar tudo"):
+                    st.session_state["selected_rows"] = df.to_dict(orient="records")
+                    selected_rows = df
+            with col2:
+                if st.button("Limpar seleção"):
+                    st.session_state["selected_rows"] = []
+                    selected_rows = pd.DataFrame()
 
             st.markdown(f"**{len(selected_rows)} linha(s) selecionada(s)**")
 
+            # Mapear colunas
             data_col = st.selectbox("Coluna de Data", options=df.columns.tolist())
             desc_col = st.selectbox("Coluna de Descrição", options=df.columns.tolist())
             valor_col = st.selectbox("Coluna de Valor (+/–)", options=df.columns.tolist())
