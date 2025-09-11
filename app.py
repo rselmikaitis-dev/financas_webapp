@@ -54,8 +54,9 @@ def read_df(conn, query, params=()):
 def to_lancamentos(df, data_col, desc_col, valor_col, origem, conta_nome, cat_col=None):
     df2 = df.copy()
 
-    # Ignorar linhas que começam com "SALDO"
-    df2 = df2[~df2[desc_col].astype(str).str.upper().str.startswith("SALDO")]
+    # Ignorar linhas cuja descrição começa com "SALDO"
+    if desc_col in df2.columns:
+        df2 = df2[~df2[desc_col].astype(str).str.strip().str.upper().str.startswith("SALDO")]
 
     # Data
     df2["__data"] = pd.to_datetime(df2[data_col], errors="coerce", dayfirst=True)
@@ -64,16 +65,23 @@ def to_lancamentos(df, data_col, desc_col, valor_col, origem, conta_nome, cat_co
     df2["__descricao"] = df2[desc_col].astype(str)
 
     # Valor (positivo = crédito, negativo = débito)
-    vals = pd.to_numeric(
+    # Trata valores como "1.234,56", "-1.234,56", "R$ 1.234,56"
+    vals = (
         df2[valor_col].astype(str)
-        .str.replace(",", ".", regex=False)
         .str.replace("R$", "", regex=False)
-        .str.replace(".", "", regex=False),
-        errors="coerce"
+        .str.replace(" ", "", regex=False)
     )
+    # Remove separador de milhares brasileiro e americano
+    # Primeiro troca milhar brasileiro "." por nada, depois vírgula decimal por ponto
+    vals = vals.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+
+    # Caso venha no padrão americano "1,234.56": remover vírgulas restantes
+    vals = vals.str.replace(",", "", regex=False)
+
+    vals = pd.to_numeric(vals, errors="coerce")
 
     # Categoria (opcional)
-    categoria = df2[cat_col].astype(str) if cat_col and cat_col in df2.columns else ""
+    categoria = df2[cat_col].astype(str) if (cat_col and cat_col in df2.columns) else ""
 
     out = pd.DataFrame({
         "data": df2["__data"],
@@ -100,6 +108,11 @@ with tab1:
     conta_nome = st.text_input("Nome da conta/cartão", value="Conta Principal")
     uploaded = st.file_uploader("Selecione um arquivo (CSV, XLS, XLSX)", type=["csv", "xls", "xlsx"])
     origem = st.selectbox("Origem do arquivo", ["conta_corrente", "cartao"])
+
+    # Estado de modo de seleção: 'manual' | 'all' | 'none'
+    if "sel_mode" not in st.session_state:
+        st.session_state["sel_mode"] = "manual"
+
     if uploaded is not None:
         try:
             if uploaded.name.lower().endswith(".csv"):
@@ -109,15 +122,14 @@ with tab1:
         except Exception as e:
             st.error(f"Erro ao ler arquivo: {e}")
             df = None
-        if df is not None and not df.empty:
-            st.write("Prévia dos dados (selecione as linhas para importar):")
 
-            # Inicializar seleção no estado da sessão
-            if "selected_rows" not in st.session_state:
-                st.session_state["selected_rows"] = []
+        if df is not None and not df.empty:
+            st.caption("Obs.: Linhas cuja descrição começar com **SALDO** serão **ignoradas** ao importar.")
+            st.write("Prévia dos dados (selecione as linhas para importar ou use os botões abaixo):")
 
             gb = GridOptionsBuilder.from_dataframe(df.head(500))
             gb.configure_selection(selection_mode="multiple", use_checkbox=True)
+            gb.configure_grid_options(rowSelection="multiple")
             grid_options = gb.build()
 
             grid_response = AgGrid(
@@ -127,39 +139,64 @@ with tab1:
                 fit_columns_on_grid_load=True,
                 enable_enterprise_modules=False,
                 theme="balham",
-                height=400,
+                height=420,
             )
 
-            # Atualizar seleção
-            st.session_state["selected_rows"] = grid_response["selected_rows"]
-            selected_rows = pd.DataFrame(st.session_state["selected_rows"])
+            selected_manual = pd.DataFrame(grid_response.get("selected_rows", []))
 
-            # Botões de controle
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Selecionar tudo"):
-                    st.session_state["selected_rows"] = df.to_dict(orient="records")
-                    selected_rows = df
-            with col2:
-                if st.button("Limpar seleção"):
-                    st.session_state["selected_rows"] = []
-                    selected_rows = pd.DataFrame()
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                if st.button("Selecionar tudo", key="btn_all"):
+                    st.session_state["sel_mode"] = "all"
+            with c2:
+                if st.button("Limpar seleção", key="btn_none"):
+                    st.session_state["sel_mode"] = "none"
+            with c3:
+                if st.button("Usar seleção manual do grid", key="btn_manual"):
+                    st.session_state["sel_mode"] = "manual"
 
-            st.markdown(f"**{len(selected_rows)} linha(s) selecionada(s)**")
+            sel_mode = st.session_state["sel_mode"]
+
+            # Decide o conjunto efetivo de linhas a importar
+            if sel_mode == "all":
+                base_sel = df.copy()
+            elif sel_mode == "none":
+                base_sel = df.iloc[0:0].copy()
+            else:
+                base_sel = selected_manual.copy()
+
+            st.markdown(f"**Modo de seleção:** `{sel_mode}` — **{len(base_sel)}** linha(s) atualmente selecionada(s).")
 
             # Mapear colunas
-            data_col = st.selectbox("Coluna de Data", options=df.columns.tolist())
-            desc_col = st.selectbox("Coluna de Descrição", options=df.columns.tolist())
-            valor_col = st.selectbox("Coluna de Valor (+/–)", options=df.columns.tolist())
-            cat_col = st.selectbox("Coluna de Categoria (opcional)", options=["<nenhuma>"] + df.columns.tolist())
+            data_col = st.selectbox("Coluna de Data", options=df.columns.tolist(), key="col_data")
+            desc_col = st.selectbox("Coluna de Descrição", options=df.columns.tolist(), key="col_desc")
+            valor_col = st.selectbox("Coluna de Valor (+/–)", options=df.columns.tolist(), key="col_valor")
+            cat_col = st.selectbox("Coluna de Categoria (opcional)", options=["<nenhuma>"] + df.columns.tolist(), key="col_cat")
 
-            if st.button("Importar selecionadas"):
+            # Mostrar quantas linhas restam após regras (saldo e datas/valores válidos)
+            if not base_sel.empty:
                 try:
-                    if selected_rows.empty:
+                    preview_norm = to_lancamentos(
+                        base_sel,
+                        data_col,
+                        desc_col,
+                        valor_col,
+                        origem=origem,
+                        conta_nome=conta_nome,
+                        cat_col=None if cat_col == "<nenhuma>" else cat_col
+                    )
+                    st.caption(f"Prévia da normalização: {len(preview_norm)} linha(s) seriam importadas após filtros.")
+                    st.dataframe(preview_norm.head(10), use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Não foi possível pré-visualizar a normalização: {e}")
+
+            if st.button("Importar linhas selecionadas", key="btn_import"):
+                try:
+                    if base_sel.empty:
                         st.warning("Nenhuma linha selecionada!")
                     else:
                         df_norm = to_lancamentos(
-                            selected_rows,
+                            base_sel,
                             data_col,
                             desc_col,
                             valor_col,
@@ -168,8 +205,11 @@ with tab1:
                             cat_col=None if cat_col == "<nenhuma>" else cat_col
                         )
                         rows = df_norm.to_dict(orient="records")
-                        n = save_rows(conn, "lancamentos", rows)
-                        st.success(f"{n} lançamentos importados com sucesso.")
+                        if not rows:
+                            st.warning("Nada para importar após aplicar filtros de data/valor e ignorar SALDO.")
+                        else:
+                            n = save_rows(conn, "lancamentos", rows)
+                            st.success(f"{n} lançamentos importados com sucesso.")
                 except Exception as e:
                     st.error(f"Falha na importação: {e}")
 
@@ -196,6 +236,7 @@ with tab2:
         by_cat = filt.groupby("categoria")["valor"].sum().sort_values()
         st.bar_chart(by_cat)
 
+        st.markdown("#### Detalhes")
         st.dataframe(filt.sort_values("data"), use_container_width=True)
 
 # --- Provisões
