@@ -72,9 +72,9 @@ cursor.execute("""
         nome TEXT UNIQUE
     )
 """)
-# Ajuste: garantir coluna vencimento
+# Garantir coluna dia_vencimento
 try:
-    cursor.execute("ALTER TABLE contas ADD COLUMN vencimento TEXT")
+    cursor.execute("ALTER TABLE contas ADD COLUMN dia_vencimento INTEGER")
 except sqlite3.OperationalError:
     pass
 
@@ -148,13 +148,18 @@ if menu == "📥 Importação":
     else:
         conta_escolhida = st.selectbox("Conta/cartão", options=contas_cadastradas)
 
-        # Buscar vencimento se for cartão
         data_vencimento = None
         if conta_escolhida.lower().startswith("cartão de crédito"):
-            cursor.execute("SELECT vencimento FROM contas WHERE nome=?", (conta_escolhida,))
+            cursor.execute("SELECT dia_vencimento FROM contas WHERE nome=?", (conta_escolhida,))
             row = cursor.fetchone()
             if row and row[0]:
-                data_vencimento = row[0]
+                dia_venc = int(row[0])
+                mes_ref = st.number_input("Mês da fatura", 1, 12, value=datetime.today().month)
+                ano_ref = st.number_input("Ano da fatura", 2000, 2100, value=datetime.today().year)
+                try:
+                    data_vencimento = date(ano_ref, mes_ref, dia_venc)
+                except ValueError:
+                    st.toast("Data de vencimento inválida ⚠️", icon="⚠️")
 
         arquivo = st.file_uploader(
             "Selecione o arquivo (3 colunas: Data, Descrição, Valor)",
@@ -237,9 +242,9 @@ elif menu == "📊 Dashboard":
 elif menu == "⚙️ Contas":
     st.header("⚙️ Contas")
 
-    cursor.execute("SELECT nome, vencimento FROM contas ORDER BY nome")
+    cursor.execute("SELECT nome, dia_vencimento FROM contas ORDER BY nome")
     contas_rows = cursor.fetchall()
-    df_contas = pd.DataFrame(contas_rows, columns=["Conta", "Vencimento"])
+    df_contas = pd.DataFrame(contas_rows, columns=["Conta", "Dia Vencimento"])
 
     if df_contas.empty:
         st.info("Nenhuma conta cadastrada ainda.")
@@ -267,28 +272,29 @@ elif menu == "⚙️ Contas":
         st.subheader("Editar conta")
         if len(nomes_sel) == 1:
             old_name = nomes_sel[0]
-            cursor.execute("SELECT vencimento FROM contas WHERE nome=?", (old_name,))
-            venc_atual = cursor.fetchone()[0]
+            cursor.execute("SELECT dia_vencimento FROM contas WHERE nome=?", (old_name,))
+            row = cursor.fetchone()
+            venc_atual = row[0] if row else None
 
             new_name = st.text_input("Novo nome", value=old_name, key=f"edit_{old_name}")
-            new_venc = None
+            new_dia = None
             if old_name.lower().startswith("cartão de crédito") or new_name.lower().startswith("cartão de crédito"):
-                venc_input = st.date_input("Data de vencimento", value=pd.to_datetime(venc_atual).date() if venc_atual else date.today())
-                new_venc = to_datestr(venc_input)
+                new_dia = st.number_input(
+                    "Dia do vencimento",
+                    min_value=1, max_value=31,
+                    value=int(venc_atual) if venc_atual else 1
+                )
 
             if st.button("Salvar alteração"):
                 new_name_clean = new_name.strip()
-                if not new_name_clean:
-                    st.toast("O nome não pode ser vazio ⚠️", icon="⚠️")
-                else:
-                    try:
-                        cursor.execute("UPDATE contas SET nome=?, vencimento=? WHERE nome=?", (new_name_clean, new_venc, old_name))
-                        cursor.execute("UPDATE transactions SET account=? WHERE account=?", (new_name_clean, old_name))
-                        conn.commit()
-                        st.toast(f"Conta atualizada: '{old_name}' → '{new_name_clean}' ✅", icon="✏️")
-                        st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.toast(f"Já existe uma conta chamada '{new_name_clean}' ⚠️", icon="⚠️")
+                try:
+                    cursor.execute("UPDATE contas SET nome=?, dia_vencimento=? WHERE nome=?", (new_name_clean, new_dia, old_name))
+                    cursor.execute("UPDATE transactions SET account=? WHERE account=?", (new_name_clean, old_name))
+                    conn.commit()
+                    st.toast(f"Conta atualizada: '{old_name}' → '{new_name_clean}' ✅", icon="✏️")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.toast(f"Já existe uma conta chamada '{new_name_clean}' ⚠️", icon="⚠️")
         elif len(nomes_sel) > 1:
             st.caption("Selecione apenas **uma** conta para editar.")
         else:
@@ -313,15 +319,14 @@ elif menu == "⚙️ Contas":
     # Adicionar
     st.subheader("Adicionar nova conta")
     nova = st.text_input("Nome da nova conta:")
-    vencimento = None
+    dia_venc = None
     if nova.lower().startswith("cartão de crédito"):
-        venc_input = st.date_input("Data de vencimento", value=date.today(), key="novo_vencimento")
-        vencimento = to_datestr(venc_input)
+        dia_venc = st.number_input("Dia do vencimento", min_value=1, max_value=31, value=1)
 
     if st.button("Adicionar conta"):
         if nova.strip():
             try:
-                cursor.execute("INSERT INTO contas (nome, vencimento) VALUES (?, ?)", (nova.strip(), vencimento))
+                cursor.execute("INSERT INTO contas (nome, dia_vencimento) VALUES (?, ?)", (nova.strip(), dia_venc))
                 conn.commit()
                 st.toast(f"Conta '{nova.strip()}' adicionada ➕", icon="💳")
                 st.rerun()
