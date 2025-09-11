@@ -110,13 +110,28 @@ if menu == "📥 Importação":
         arquivo = st.file_uploader("Selecione o arquivo (3 colunas: Data, Descrição, Valor)", type=["xls", "xlsx", "csv"])
 
         if arquivo is not None:
-            # Leitura simplificada
             try:
+                # Leitura com header
                 if arquivo.name.lower().endswith(".csv"):
-                    df = pd.read_csv(arquivo, header=None)
+                    df = pd.read_csv(arquivo)
                 else:
-                    df = pd.read_excel(arquivo, header=None)
+                    df = pd.read_excel(arquivo)
+
+                # Forçar apenas 3 colunas
+                df = df.iloc[:, :3]
                 df.columns = ["Data", "Descrição", "Valor"]
+
+                # Limpar coluna de valor
+                df["Valor"] = (
+                    df["Valor"]
+                    .astype(str)
+                    .str.replace("R$", "", regex=False)
+                    .str.replace(".", "", regex=False)   # remove separador de milhar
+                    .str.replace(",", ".", regex=False)  # vírgula → ponto
+                    .str.strip()
+                )
+                df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
+
             except Exception as e:
                 st.toast(f"Erro ao ler o arquivo: {e} ⚠️", icon="⚠️")
                 st.stop()
