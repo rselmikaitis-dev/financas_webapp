@@ -9,7 +9,6 @@ st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="w
 # AUTENTICAÇÃO
 # =====================
 
-# Configure suas credenciais no Streamlit Cloud em "Secrets":
 AUTH_USERNAME = st.secrets.get("AUTH_USERNAME", "rafael")
 AUTH_PASSWORD_BCRYPT = st.secrets.get(
     "AUTH_PASSWORD_BCRYPT",
@@ -48,7 +47,6 @@ if "auth_ok" not in st.session_state or not st.session_state["auth_ok"]:
     login_view()
     st.stop()
 
-# Botão de logout
 logout_col = st.columns(8)[-1]
 with logout_col:
     if st.button("Sair", type="secondary"):
@@ -96,6 +94,7 @@ with aba_importacao:
     else:
         conta_escolhida = st.selectbox("Conta/cartão", options=contas_cadastradas)
         arquivo = st.file_uploader("Selecione o arquivo do extrato ou fatura", type=["xls", "xlsx", "csv"])
+
         if st.button("Importar") and arquivo:
             try:
                 if arquivo.name.lower().endswith(".csv"):
@@ -106,44 +105,48 @@ with aba_importacao:
                 st.error(f"Erro ao ler o arquivo: {e}")
                 st.stop()
 
-            total_importados = 0
-            if "Débito" in df.columns or "Debito" in df.columns:
-                col_debito = "Débito" if "Débito" in df.columns else "Debito"
-                col_credito = "Crédito" if "Crédito" in df.columns else "Credito"
-                col_desc = "Identificação" if "Identificação" in df.columns else "Descricao"
-                df_filtrado = df[~df[col_desc].astype(str).str.upper().str.startswith("SALDO")]
-                for _, row in df_filtrado.iterrows():
-                    data_str = str(row["Data"]) if not isinstance(row["Data"], str) else row["Data"]
-                    descricao = str(row[col_desc])
-                    valor = 0.0
-                    if col_credito in row and pd.notna(row[col_credito]):
-                        valor += float(row[col_credito])
-                    if col_debito in row and pd.notna(row[col_debito]):
-                        valor -= float(row[col_debito])
-                    cursor.execute(
-                        "INSERT INTO transactions (date, description, value, account) VALUES (?, ?, ?, ?)",
-                        (data_str, descricao, valor, conta_escolhida)
-                    )
-                    total_importados += 1
-                conn.commit()
-            else:
-                col_desc = "Descrição" if "Descrição" in df.columns else "Descricao"
-                col_valor = "Valor" if "Valor" in df.columns else "Valor (R$)"
-                df_filtrado = df[~df[col_desc].astype(str).str.upper().str.startswith("SALDO")]
-                for _, row in df_filtrado.iterrows():
-                    data_str = str(row["Data"]) if not isinstance(row["Data"], str) else row["Data"]
-                    descricao = str(row[col_desc])
-                    valor = float(row[col_valor]) if pd.notna(row[col_valor]) else 0.0
-                    if "PAGAMENTO" in descricao.upper() or "PAGTO" in descricao.upper():
-                        valor = -valor
-                    cursor.execute(
-                        "INSERT INTO transactions (date, description, value, account) VALUES (?, ?, ?, ?)",
-                        (data_str, descricao, valor, conta_escolhida)
-                    )
-                    total_importados += 1
-                conn.commit()
+            colunas = df.columns.tolist()
+            data_col = st.selectbox("Coluna de Data", options=colunas)
+            desc_col = st.selectbox("Coluna de Descrição", options=colunas)
 
-            st.success(f"{total_importados} lançamentos importados para a conta **{conta_escolhida}**!")
+            valor_col = None
+            deb_col = None
+            cred_col = None
+
+            if "Débito" in colunas or "Debito" in colunas:
+                deb_col = st.selectbox("Coluna de Débito", options=colunas)
+                cred_col = st.selectbox("Coluna de Crédito", options=colunas)
+            else:
+                valor_col = st.selectbox("Coluna de Valor (+/–)", options=colunas)
+
+            if st.button("Confirmar Importação"):
+                try:
+                    df_filtrado = df[~df[desc_col].astype(str).str.upper().str.startswith("SALDO")]
+                    total_importados = 0
+
+                    for _, row in df_filtrado.iterrows():
+                        data_str = str(row[data_col]) if not isinstance(row[data_col], str) else row[data_col]
+                        descricao = str(row[desc_col])
+
+                        if valor_col:
+                            valor = float(row[valor_col]) if pd.notna(row[valor_col]) else 0.0
+                        else:
+                            valor = 0.0
+                            if pd.notna(row[cred_col]):
+                                valor += float(row[cred_col])
+                            if pd.notna(row[deb_col]):
+                                valor -= float(row[deb_col])
+
+                        cursor.execute(
+                            "INSERT INTO transactions (date, description, value, account) VALUES (?, ?, ?, ?)",
+                            (data_str, descricao, valor, conta_escolhida)
+                        )
+                        total_importados += 1
+
+                    conn.commit()
+                    st.success(f"{total_importados} lançamentos importados para a conta **{conta_escolhida}**!")
+                except Exception as e:
+                    st.error(f"Falha na importação: {e}")
 
 # --- Aba Dashboard
 with aba_dashboard:
