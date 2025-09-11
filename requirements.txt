@@ -4,3 +4,4 @@ numpy
 xlrd>=2.0.1
 openpyxl
 streamlit-aggrid
+bcrypt
