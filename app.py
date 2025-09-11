@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import bcrypt
+from streamlit_option_menu import option_menu
 
 st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="wide")
 
@@ -80,9 +81,17 @@ cursor.execute("""
 conn.commit()
 
 # =====================
-# MENU LATERAL
+# MENU LATERAL BONITO
 # =====================
-menu = st.sidebar.radio("📌 Menu", ["📥 Importação", "📊 Dashboard", "⚙️ Contas"])
+with st.sidebar:
+    menu = option_menu(
+        "📌 Menu",
+        ["📥 Importação", "📊 Dashboard", "⚙️ Contas"],
+        icons=["cloud-upload", "bar-chart", "gear"],  # ícones bootstrap
+        menu_icon="cast",
+        default_index=0,
+        orientation="vertical"
+    )
 
 # --- Importação
 if menu == "📥 Importação":
