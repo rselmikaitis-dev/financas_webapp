@@ -82,13 +82,6 @@ conn.commit()
 # =====================
 # HELPERS
 # =====================
-def to_datestr(x) -> str:
-    if isinstance(x, (datetime, pd.Timestamp)):
-        return x.strftime("%Y-%m-%d")
-    if isinstance(x, date):
-        return x.strftime("%Y-%m-%d")
-    return str(x)
-
 def parse_money(val) -> float | None:
     if pd.isna(val):
         return None
@@ -151,7 +144,6 @@ if menu == "📊 Dashboard":
         if df_mes.empty:
             st.warning(f"Nenhum lançamento encontrado para {mes_sel:02d}/{ano_sel}.")
         else:
-            # Resumo entradas/saídas
             entradas = df_mes[df_mes["value"] > 0]["value"].sum()
             saidas = df_mes[df_mes["value"] < 0]["value"].sum()
             saldo = entradas + saidas
@@ -209,7 +201,11 @@ elif menu == "📥 Importação":
 
                 df = df.iloc[:, :3]
                 df.columns = ["Data", "Descrição", "Valor"]
-                df["Data"] = df["Data"].apply(to_datestr)
+
+                # Normalizar data para ISO antes de salvar
+                df["Data"] = pd.to_datetime(df["Data"], errors="coerce", dayfirst=True)
+                df["Data"] = df["Data"].dt.strftime("%Y-%m-%d")
+
                 df["ValorNum"] = df["Valor"].apply(parse_money)
             except Exception as e:
                 st.toast(f"Erro ao ler/normalizar o arquivo: {e} ⚠️", icon="⚠️")
@@ -223,7 +219,7 @@ elif menu == "📥 Importação":
             # Ajustes para cartão de crédito
             if conta_escolhida.lower().startswith("cartão de crédito"):
                 if data_vencimento:
-                    df_filtrado["Data"] = to_datestr(data_vencimento)
+                    df_filtrado["Data"] = pd.to_datetime(data_vencimento).strftime("%Y-%m-%d")
                 df_filtrado["Valor"] = df_filtrado["Valor"] * -1
 
             st.markdown("### Pré-visualização")
@@ -234,7 +230,12 @@ elif menu == "📥 Importação":
                     for _, row in df_filtrado.iterrows():
                         cursor.execute(
                             "INSERT INTO transactions (date, description, value, account) VALUES (?, ?, ?, ?)",
-                            (str(row["Data"]), str(row["Descrição"]), float(row["Valor"]), conta_escolhida)
+                            (
+                                pd.to_datetime(row["Data"], errors="coerce", dayfirst=True).strftime("%Y-%m-%d"),
+                                str(row["Descrição"]),
+                                float(row["Valor"]),
+                                conta_escolhida
+                            )
                         )
                     conn.commit()
                     st.toast(f"{len(df_filtrado)} lançamentos importados para {conta_escolhida} 💰", icon="📥")
