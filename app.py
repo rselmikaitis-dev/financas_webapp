@@ -81,13 +81,13 @@ cursor.execute("""
 conn.commit()
 
 # =====================
-# MENU LATERAL BONITO
+# MENU LATERAL MODERNO
 # =====================
 with st.sidebar:
     menu = option_menu(
-        "📌 Menu",
+        "Menu",
         ["📥 Importação", "📊 Dashboard", "⚙️ Contas"],
-        icons=["cloud-upload", "bar-chart", "gear"],  # ícones bootstrap
+        icons=["cloud-upload", "bar-chart", "gear"],
         menu_icon="cast",
         default_index=0,
         orientation="vertical"
@@ -186,10 +186,40 @@ elif menu == "⚙️ Contas":
     st.header("⚙️ Contas")
     cursor.execute("SELECT nome FROM contas ORDER BY nome")
     contas = [r[0] for r in cursor.fetchall()]
+
     if contas:
         st.write("Contas cadastradas:")
-        for c in contas:
-            st.write("-", c)
+        conta_sel = st.selectbox("Selecione uma conta para editar/excluir:", contas)
+
+        novo_nome = st.text_input("Editar nome da conta:", value=conta_sel)
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Salvar alteração"):
+                try:
+                    cursor.execute("UPDATE contas SET nome=? WHERE nome=?", (novo_nome, conta_sel))
+                    cursor.execute("UPDATE transactions SET account=? WHERE account=?", (novo_nome, conta_sel))
+                    conn.commit()
+                    st.success(f"Conta '{conta_sel}' atualizada para '{novo_nome}'.")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("Já existe uma conta com esse nome.")
+        with col2:
+            if st.button("Excluir conta"):
+                st.session_state["confirm_delete"] = conta_sel
+
+        # Confirmação de exclusão
+        if "confirm_delete" in st.session_state and st.session_state["confirm_delete"] == conta_sel:
+            st.error(f"⚠️ Tem certeza que deseja excluir a conta '{conta_sel}' e todos os seus lançamentos?")
+            confirm = st.radio("Confirmação", ["Não", "Sim"], horizontal=True, key=f"conf_{conta_sel}")
+            if confirm == "Sim":
+                cursor.execute("DELETE FROM transactions WHERE account=?", (conta_sel,))
+                cursor.execute("DELETE FROM contas WHERE nome=?", (conta_sel,))
+                conn.commit()
+                st.success(f"Conta '{conta_sel}' e seus lançamentos foram excluídos.")
+                del st.session_state["confirm_delete"]
+                st.rerun()
+            elif confirm == "Não":
+                del st.session_state["confirm_delete"]
     else:
         st.write("Nenhuma conta cadastrada.")
 
@@ -200,6 +230,7 @@ elif menu == "⚙️ Contas":
                 cursor.execute("INSERT INTO contas (nome) VALUES (?)", (nova.strip(),))
                 conn.commit()
                 st.success(f"Conta '{nova.strip()}' adicionada.")
+                st.rerun()
             except sqlite3.IntegrityError:
                 st.error("Essa conta já existe.")
         else:
