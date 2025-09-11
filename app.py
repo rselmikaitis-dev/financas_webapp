@@ -1,317 +1,186 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import sqlite3
-from datetime import date
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-import bcrypt
 
-st.set_page_config(page_title="Controle Financeiro Familiar", layout="wide")
+# Configuração inicial do aplicativo (pode ajustar título/ícone se necessário)
+st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="wide")
 
-DB_PATH = "data.db"
+# Inicialização da conexão com o banco de dados SQLite (reutilizando durante a sessão)
+if 'conn' not in st.session_state:
+    st.session_state.conn = sqlite3.connect('data.db', check_same_thread=False)
+conn = st.session_state.conn
+cursor = conn.cursor()
 
-# =========================
-# ====== AUTENTICAÇÃO =====
-# =========================
+# Garantir que as tabelas necessárias existam (contas e transações)
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS contas (
+        id INTEGER PRIMARY KEY,
+        nome TEXT UNIQUE
+    )
+""")
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS transactions (
+        id INTEGER PRIMARY KEY,
+        date TEXT,
+        description TEXT,
+        value REAL,
+        account TEXT
+    )
+""")
+conn.commit()
 
-# Pegue credenciais prioritariamente de st.secrets (ideal no Streamlit Cloud),
-# com fallback para valores do código.
-AUTH_USERNAME = st.secrets.get("AUTH_USERNAME", "rafael")
-AUTH_PASSWORD_BCRYPT = st.secrets.get(
-    "AUTH_PASSWORD_BCRYPT",
-    # Substitua por um hash bcrypt seu (ex.: $2b$12$...):
-    "$2b$12$abcdefghijklmnopqrstuv1234567890abcdefghijklmnopqrstuv12"
-)
-
-def check_password(plain: str, hashed: str) -> bool:
-    try:
-        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
-    except Exception:
-        return False
-
-def login_view():
-    st.title("🔐 Login – Controle Financeiro Familiar")
-    with st.form("login_form", clear_on_submit=False):
-        u = st.text_input("Usuário")
-        p = st.text_input("Senha", type="password")
-        submitted = st.form_submit_button("Entrar")
-        if submitted:
-            if u == AUTH_USERNAME and check_password(p, AUTH_PASSWORD_BCRYPT):
-                st.session_state["auth_ok"] = True
-                st.rerun()
-            else:
-                st.error("Usuário ou senha inválidos.")
-
-    with st.expander("Gerar hash bcrypt (opcional)"):
-        st.caption("Use isto para gerar um hash a partir de uma senha nova e colar em `st.secrets`.")
-        new_pass = st.text_input("Digite a senha para gerar hash", type="password")
-        if st.button("Gerar hash bcrypt"):
-            if not new_pass:
-                st.warning("Informe uma senha.")
-            else:
-                hashed = bcrypt.hashpw(new_pass.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-                st.code(hashed, language="text")
-                st.info("Copie esse hash e configure em `AUTH_PASSWORD_BCRYPT` nos secrets.")
-
-# Gate de autenticação
-if "auth_ok" not in st.session_state or not st.session_state["auth_ok"]:
-    login_view()
+# Verificação de autenticação (substitua de acordo com a lógica de autenticação do app)
+if 'authentication_status' in st.session_state:
+    if not st.session_state['authentication_status']:
+        st.error("Você precisa fazer login para continuar.")
+        st.stop()
+else:
+    # Se não houver informação de autenticação, não prosseguir
+    st.warning("Por favor, faça login para acessar o aplicativo.")
     st.stop()
 
-# Botão de logout no topo
-logout_col = st.columns(8)[-1]
-with logout_col:
-    if st.button("Sair", type="secondary"):
-        st.session_state.clear()
-        st.rerun()
+# Definição das abas principais do aplicativo
+aba_importacao, aba_dashboard, aba_contas = st.tabs(["Importação", "Dashboard", "⚙️ Contas"])
 
-# =========================
-# ====== PERSISTÊNCIA =====
-# =========================
-def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS lancamentos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        data DATE NOT NULL,
-        descricao TEXT,
-        categoria TEXT,
-        conta TEXT,
-        origem TEXT, -- 'cartao' ou 'conta_corrente'
-        valor REAL NOT NULL, -- negativo = saída, positivo = entrada
-        competencia TEXT -- AAAA-MM
-    )
-    """)
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS provisoes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        competencia TEXT,
-        descricao TEXT,
-        categoria TEXT,
-        valor REAL,
-        recorrencia TEXT
-    )
-    """)
-    return conn
-
-def save_rows(conn, table, rows):
-    if not rows:
-        return 0
-    cols = rows[0].keys()
-    placeholders = ",".join(["?"]*len(cols))
-    q = f"INSERT INTO {table} ({','.join(cols)}) VALUES ({placeholders})"
-    cur = conn.cursor()
-    cur.executemany(q, [tuple(r[c] for c in cols) for r in rows])
-    conn.commit()
-    return cur.rowcount
-
-def read_df(conn, query, params=()):
-    return pd.read_sql_query(query, conn, params=params)
-
-# =========================
-# ===== NORMALIZAÇÃO =====
-# =========================
-def normalize_numeric_series(series: pd.Series) -> pd.Series:
-    # Trata "R$ 1.234,56", "-1.234,56", "1,234.56", etc.
-    vals = series.astype(str).str.replace("R$", "", regex=False).str.replace(" ", "", regex=False)
-    # Remoção do separador de milhar BR e troca vírgula decimal por ponto
-    vals = vals.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-    # Remoção de vírgulas remanescentes (caso formato en-US)
-    vals = vals.str.replace(",", "", regex=False)
-    return pd.to_numeric(vals, errors="coerce")
-
-def to_lancamentos(df, data_col, desc_col, valor_col, origem, conta_nome, cat_col=None):
-    df2 = df.copy()
-
-    # Ignorar linhas que começam com "SALDO" (não apenas visual – também no import)
-    if desc_col in df2.columns:
-        df2 = df2[~df2[desc_col].astype(str).str.strip().str.upper().str.startswith("SALDO")]
-
-    # Datas
-    df2["__data"] = pd.to_datetime(df2[data_col], errors="coerce", dayfirst=True)
-
-    # Descrição
-    df2["__descricao"] = df2[desc_col].astype(str)
-
-    # Valor (positivo = crédito, negativo = débito)
-    vals = normalize_numeric_series(df2[valor_col])
-
-    # Categoria (opcional)
-    categoria = df2[cat_col].astype(str) if (cat_col and cat_col in df2.columns) else ""
-
-    out = pd.DataFrame({
-        "data": df2["__data"],
-        "descricao": df2["__descricao"],
-        "categoria": categoria,
-        "conta": conta_nome,
-        "origem": origem,
-        "valor": vals
-    }).dropna(subset=["data", "valor"])
-
-    out["competencia"] = out["data"].dt.strftime("%Y-%m")
-    return out
-
-# =========================
-# ========= UI ============
-# =========================
-st.title("💸 Controle Financeiro Familiar")
-
-conn = get_conn()
-
-tab1, tab2, tab3, tab4 = st.tabs(["📥 Importar", "📊 Painel Mensal", "📅 Provisões", "📤 Exportar"])
-
-# --- Importar
-with tab1:
-    st.subheader("Importar Arquivos")
-    conta_nome = st.text_input("Nome da conta/cartão", value="Conta Principal")
-    uploaded = st.file_uploader("Selecione um arquivo (CSV, XLS, XLSX)", type=["csv", "xls", "xlsx"])
-    origem = st.selectbox("Origem do arquivo", ["conta_corrente", "cartao"])
-
-    if uploaded is not None:
-        # Carregar arquivo
-        try:
-            if uploaded.name.lower().endswith(".csv"):
-                raw_df = pd.read_csv(uploaded, sep=None, engine="python")
-            else:
-                raw_df = pd.read_excel(uploaded)
-        except Exception as e:
-            st.error(f"Erro ao ler arquivo: {e}")
-            raw_df = None
-
-        if raw_df is not None and not raw_df.empty:
-            st.caption("Obs.: Linhas com descrição iniciando em **SALDO** serão ocultadas e não importadas.")
-
-            # Mapeamento de colunas ANTES do grid,
-            # para filtrarmos SALDO no DataFrame exibido.
-            cols = raw_df.columns.tolist()
-            # Tentativa de “chute” de colunas
-            cols_lower = {c.lower(): c for c in cols}
-            guess_data = next((cols_lower[k] for k in cols_lower if k in ["data", "date", "lançamento", "lan\u00e7amento", "dt"]), cols[0])
-            guess_desc = next((cols_lower[k] for k in cols_lower if k in ["descricao", "descrição", "description", "history", "detalhe", "lançamento", "lan\u00e7amento"]), cols[min(1, len(cols)-1)])
-            guess_val = next((cols_lower[k] for k in cols_lower if k in ["valor", "valor (r$)", "amount", "valor do lançamento", "vlr"]), cols[min(2, len(cols)-1)])
-
-            data_col = st.selectbox("Coluna de Data", options=cols, index=cols.index(guess_data) if guess_data in cols else 0)
-            desc_col = st.selectbox("Coluna de Descrição", options=cols, index=cols.index(guess_desc) if guess_desc in cols else 0)
-            valor_col = st.selectbox("Coluna de Valor (+/–)", options=cols, index=cols.index(guess_val) if guess_val in cols else 0)
-            cat_col = st.selectbox("Coluna de Categoria (opcional)", options=["<nenhuma>"] + cols)
-
-            # Filtrar SALDO no DataFrame mostrado
-            df_show = raw_df.copy()
-            df_show = df_show[~df_show[desc_col].astype(str).str.strip().str.upper().str.startswith("SALDO")]
-
-            st.write("Prévia dos dados (linhas SALDO removidas):")
-            gb = GridOptionsBuilder.from_dataframe(df_show.head(1000))
-            gb.configure_grid_options(rowSelection="single")  # apenas navegação; sem seleção múltipla
-            grid_options = gb.build()
-
-            AgGrid(
-                df_show,
-                gridOptions=grid_options,
-                update_mode=GridUpdateMode.NO_UPDATE,
-                fit_columns_on_grid_load=True,
-                enable_enterprise_modules=False,
-                theme="balham",
-                height=420,
-            )
-
-            # Prévia da normalização (subset)
-            try:
-                preview_norm = to_lancamentos(
-                    df_show.head(200),  # só para preview
-                    data_col,
-                    desc_col,
-                    valor_col,
-                    origem=origem,
-                    conta_nome=conta_nome,
-                    cat_col=None if cat_col == "<nenhuma>" else cat_col
-                )
-                st.caption(f"Prévia da normalização (primeiras {min(200, len(df_show))} linhas visíveis): {len(preview_norm)} linha(s).")
-                st.dataframe(preview_norm.head(10), use_container_width=True)
-            except Exception as e:
-                st.warning(f"Não foi possível pré-visualizar a normalização: {e}")
-
-            # Importar tudo (já com SALDO removido)
-            if st.button("Importar tudo (sem SALDO)"):
-                try:
-                    df_norm = to_lancamentos(
-                        df_show,  # SALDO já removido
-                        data_col,
-                        desc_col,
-                        valor_col,
-                        origem=origem,
-                        conta_nome=conta_nome,
-                        cat_col=None if cat_col == "<nenhuma>" else cat_col
-                    )
-                    rows = df_norm.to_dict(orient="records")
-                    if not rows:
-                        st.warning("Nada para importar após aplicar filtros de data/valor e remover SALDO.")
-                    else:
-                        n = save_rows(conn, "lancamentos", rows)
-                        st.success(f"{n} lançamentos importados com sucesso.")
-                except Exception as e:
-                    st.error(f"Falha na importação: {e}")
-
-# --- Painel
-with tab2:
-    st.subheader("Painel por Competência")
-    lanc = read_df(conn, "SELECT * FROM lancamentos")
-    if lanc.empty:
-        st.info("Nenhum lançamento importado ainda.")
+# --- Aba de Importação de Lançamentos ---
+with aba_importacao:
+    st.header("Importação de Lançamentos")
+    # Seleção da conta/cartão vinculada aos lançamentos importados
+    cursor.execute("SELECT nome FROM contas")
+    contas_cadastradas = [row[0] for row in cursor.fetchall()]
+    if len(contas_cadastradas) == 0:
+        st.info("Nenhuma conta cadastrada. Cadastre uma conta na aba ⚙️ Contas antes de importar lançamentos.")
     else:
-        lanc["data"] = pd.to_datetime(lanc["data"])
-        lanc["competencia"] = lanc["data"].dt.strftime("%Y-%m")
-        comp = st.selectbox("Competência", sorted(lanc["competencia"].unique()))
-        filt = lanc[lanc["competencia"] == comp]
+        conta_escolhida = st.selectbox("Nome da conta/cartão", options=contas_cadastradas)
+        # Upload do arquivo de extrato/fatura
+        arquivo = st.file_uploader("Selecione o arquivo do extrato ou fatura", type=["xls", "xlsx", "csv"])
+        btn_importar = st.button("Importar", disabled=(arquivo is None))
+        if btn_importar:
+            if arquivo is None:
+                st.error("Por favor, selecione um arquivo para importar.")
+            else:
+                try:
+                    # Leitura do arquivo em um DataFrame pandas
+                    if arquivo.name.lower().endswith('.csv'):
+                        df = pd.read_csv(arquivo, sep=";", engine='python')  # exemplo: CSV separado por ponto-e-vírgula
+                    else:
+                        df = pd.read_excel(arquivo)
+                except Exception as e:
+                    st.error(f"Erro ao ler o arquivo: {e}")
+                    st.stop()
+                # Determinar formato (extrato bancário ou fatura de cartão) com base nas colunas
+                total_importados = 0
+                if 'Débito' in df.columns or 'Debito' in df.columns:
+                    # Trata como Extrato de conta corrente
+                    col_debito = 'Débito' if 'Débito' in df.columns else 'Debito'
+                    col_credito = 'Crédito' if 'Crédito' in df.columns else 'Credito'
+                    col_desc = 'Identificação' if 'Identificação' in df.columns else 'Descricao'
+                    # Remover linhas de saldo (ex.: "SALDO ANTERIOR", "SALDO DO DIA")
+                    df_filtrado = df[~df[col_desc].astype(str).str.contains('SALDO', case=False, na=False)]
+                    # Inserir cada lançamento filtrado no banco
+                    for _, row in df_filtrado.iterrows():
+                        # Converter data para string no formato YYYY-MM-DD
+                        data_str = row['Data']
+                        if not isinstance(data_str, str):
+                            try:
+                                data_str = data_str.strftime("%Y-%m-%d")
+                            except Exception:
+                                data_str = str(data_str)
+                        descricao = str(row[col_desc])
+                        # Calcular valor: crédito positivo, débito negativo
+                        valor = 0.0
+                        if col_credito in row and pd.notna(row[col_credito]):
+                            valor += float(row[col_credito])
+                        if col_debito in row and pd.notna(row[col_debito]):
+                            valor -= float(row[col_debito])
+                        valor = round(valor, 2)
+                        # Inserir no SQLite
+                        cursor.execute(
+                            "INSERT INTO transactions (date, description, value, account) VALUES (?, ?, ?, ?)",
+                            (data_str, descricao, valor, conta_escolhida)
+                        )
+                        total_importados += 1
+                    conn.commit()
+                else:
+                    # Trata como Fatura de cartão de crédito
+                    col_desc = 'Descrição' if 'Descrição' in df.columns else 'Descricao'
+                    col_valor = 'Valor' if 'Valor' in df.columns else 'Valor (R$)'
+                    df_filtrado = df[~df[col_desc].astype(str).str.contains('SALDO', case=False, na=False)]
+                    for _, row in df_filtrado.iterrows():
+                        data_str = row['Data']
+                        if not isinstance(data_str, str):
+                            try:
+                                data_str = data_str.strftime("%Y-%m-%d")
+                            except Exception:
+                                data_str = str(data_str)
+                        descricao = str(row[col_desc])
+                        valor = float(row[col_valor]) if pd.notna(row[col_valor]) else 0.0
+                        # Negativar valores de pagamentos/créditos (reduzem saldo do cartão)
+                        desc_maiusc = descricao.upper()
+                        if "PAGAMENTO" in desc_maiusc or "PAGTO" in desc_maiusc:
+                            valor = -valor
+                        valor = round(valor, 2)
+                        cursor.execute(
+                            "INSERT INTO transactions (date, description, value, account) VALUES (?, ?, ?, ?)",
+                            (data_str, descricao, valor, conta_escolhida)
+                        )
+                        total_importados += 1
+                    conn.commit()
+                # Exibir mensagem de sucesso com quantidade importada
+                if total_importados > 0:
+                    st.success(f"{total_importados} lançamentos importados com sucesso para a conta **{conta_escolhida}**!")
+                else:
+                    st.warning("Nenhum lançamento foi importado (verifique se o arquivo continha lançamentos válidos).")
 
-        colA, colB, colC = st.columns(3)
-        total_entradas = filt.loc[filt["valor"] > 0, "valor"].sum()
-        total_saidas = filt.loc[filt["valor"] < 0, "valor"].sum()
-        saldo = filt["valor"].sum()
-        with colA: st.metric("Entradas", f"R$ {total_entradas:,.2f}")
-        with colB: st.metric("Saídas", f"R$ {total_saidas:,.2f}")
-        with colC: st.metric("Saldo", f"R$ {saldo:,.2f}")
+# --- Aba de Dashboard Financeiro ---
+with aba_dashboard:
+    st.header("Dashboard Financeiro")
+    # Consultar todos os lançamentos do banco
+    df_lanc = pd.read_sql_query("SELECT date, description, value, account FROM transactions", conn)
+    if df_lanc.empty:
+        st.info("Nenhum lançamento encontrado no banco de dados.")
+    else:
+        # Filtro por conta (multiselect)
+        contas_disp = sorted(df_lanc['account'].unique().tolist())
+        contas_selecionadas = st.multiselect("Filtrar por conta:", options=contas_disp, default=contas_disp)
+        df_filtrado = df_lanc[df_lanc['account'].isin(contas_selecionadas)]
+        # Filtro para incluir/excluir linhas de saldo
+        incluir_saldo = st.checkbox("Incluir linhas de saldo (SALDO ANTERIOR/FINAL)", value=False)
+        if not incluir_saldo:
+            df_filtrado = df_filtrado[~df_filtrado['description'].str.contains('SALDO', case=False, na=False)]
+        # Exibir resumo por conta
+        resumo = df_filtrado.groupby('account')['value'].sum().reset_index()
+        resumo.columns = ['Conta', 'Saldo (soma dos valores)']
+        st.subheader("Saldo por Conta")
+        st.dataframe(resumo, height=150)
+        # Exibir tabela de lançamentos filtrados
+        st.subheader("Lançamentos Detalhados")
+        st.dataframe(df_filtrado.sort_values(by='date', ascending=False), height=300)
 
-        by_cat = filt.groupby("categoria")["valor"].sum().sort_values()
-        st.bar_chart(by_cat)
-
-        st.markdown("#### Detalhes")
-        st.dataframe(filt.sort_values("data"), use_container_width=True)
-
-# --- Provisões
-with tab3:
-    st.subheader("Provisões")
-    with st.form("prov_form"):
-        comp = st.text_input("Competência (AAAA-MM)", value=pd.Timestamp.today().strftime("%Y-%m"))
-        desc = st.text_input("Descrição", value="")
-        cat = st.text_input("Categoria", value="Provisão")
-        val = st.number_input("Valor (negativo para custo)", value=0.0, step=50.0, format="%.2f")
-        rec = st.selectbox("Recorrência", ["mensal", "unico", "anual", "custom"])
-        submitted = st.form_submit_button("Salvar Provisão")
-        if submitted:
-            rows = [{
-                "competencia": comp,
-                "descricao": desc,
-                "categoria": cat,
-                "valor": val,
-                "recorrencia": rec
-            }]
-            n = save_rows(conn, "provisoes", rows)
-            st.success("Provisão salva.")
-
-    prov = read_df(conn, "SELECT * FROM provisoes")
-    if not prov.empty:
-        st.dataframe(prov, use_container_width=True)
-
-# --- Exportar
-with tab4:
-    st.subheader("Exportar")
-    lanc = read_df(conn, "SELECT * FROM lancamentos")
-    prov = read_df(conn, "SELECT * FROM provisoes")
-
-    if not lanc.empty:
-        csv = lanc.to_csv(index=False).encode("utf-8")
-        st.download_button("Baixar lançamentos (CSV)", data=csv, file_name="lancamentos.csv")
-
-    if not prov.empty:
-        csv2 = prov.to_csv(index=False).encode("utf-8")
-        st.download_button("Baixar provisões (CSV)", data=csv2, file_name="provisoes.csv")
+# --- Aba de Contas (Gerenciamento de contas/cartões) ---
+with aba_contas:
+    st.header("⚙️ Contas")
+    # Lista de contas cadastradas
+    cursor.execute("SELECT nome FROM contas ORDER BY nome")
+    todas_contas = [row[0] for row in cursor.fetchall()]
+    if len(todas_contas) > 0:
+        st.write("**Contas cadastradas:**")
+        for nome_conta in todas_contas:
+            st.write(f"- {nome_conta}")
+    else:
+        st.write("Nenhuma conta cadastrada ainda.")
+    # Formulário simples para adicionar nova conta
+    st.subheader("Adicionar nova conta/cartão")
+    nova_conta = st.text_input("Nome da nova conta:")
+    if st.button("Adicionar conta"):
+        if nova_conta.strip() == "":
+            st.error("O nome da conta não pode ser vazio.")
+        else:
+            try:
+                cursor.execute("INSERT INTO contas (nome) VALUES (?)", (nova_conta.strip(),))
+                conn.commit()
+                st.success(f"Conta **{nova_conta.strip()}** adicionada com sucesso!")
+                # Atualizar a lista de contas em tempo real
+                todas_contas.append(nova_conta.strip())
+            except sqlite3.IntegrityError:
+                st.error("Já existe uma conta cadastrada com esse nome. Escolha outro nome.")
