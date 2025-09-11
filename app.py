@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import sqlite3
 from datetime import date
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
 st.set_page_config(page_title="Controle Financeiro Familiar", layout="wide")
 
@@ -109,26 +110,49 @@ with tab1:
             st.error(f"Erro ao ler arquivo: {e}")
             df = None
         if df is not None and not df.empty:
-            st.write("Prévia dos dados:")
-            st.dataframe(df.head(20), use_container_width=True)
+            st.write("Prévia dos dados (selecione as linhas para importar):")
+
+            # Grid interativo com seleção
+            gb = GridOptionsBuilder.from_dataframe(df.head(500))
+            gb.configure_selection(selection_mode="multiple", use_checkbox=True)
+            grid_options = gb.build()
+
+            grid_response = AgGrid(
+                df,
+                gridOptions=grid_options,
+                update_mode=GridUpdateMode.SELECTION_CHANGED,
+                fit_columns_on_grid_load=True,
+                enable_enterprise_modules=False,
+                theme="balham",
+                height=400,
+            )
+
+            selected_rows = pd.DataFrame(grid_response["selected_rows"])
+
+            st.markdown(f"**{len(selected_rows)} linha(s) selecionada(s)**")
 
             data_col = st.selectbox("Coluna de Data", options=df.columns.tolist())
             desc_col = st.selectbox("Coluna de Descrição", options=df.columns.tolist())
             valor_col = st.selectbox("Coluna de Valor (+/–)", options=df.columns.tolist())
             cat_col = st.selectbox("Coluna de Categoria (opcional)", options=["<nenhuma>"] + df.columns.tolist())
 
-            if st.button("Importar"):
+            if st.button("Importar selecionadas"):
                 try:
-                    df_norm = to_lancamentos(df,
-                                             data_col,
-                                             desc_col,
-                                             valor_col,
-                                             origem=origem,
-                                             conta_nome=conta_nome,
-                                             cat_col=None if cat_col == "<nenhuma>" else cat_col)
-                    rows = df_norm.to_dict(orient="records")
-                    n = save_rows(conn, "lancamentos", rows)
-                    st.success(f"{n} lançamentos importados com sucesso.")
+                    if selected_rows.empty:
+                        st.warning("Nenhuma linha selecionada!")
+                    else:
+                        df_norm = to_lancamentos(
+                            selected_rows,
+                            data_col,
+                            desc_col,
+                            valor_col,
+                            origem=origem,
+                            conta_nome=conta_nome,
+                            cat_col=None if cat_col == "<nenhuma>" else cat_col
+                        )
+                        rows = df_norm.to_dict(orient="records")
+                        n = save_rows(conn, "lancamentos", rows)
+                        st.success(f"{n} lançamentos importados com sucesso.")
                 except Exception as e:
                     st.error(f"Falha na importação: {e}")
 
