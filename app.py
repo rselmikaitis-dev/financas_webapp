@@ -69,10 +69,15 @@ cursor = conn.cursor()
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS contas (
         id INTEGER PRIMARY KEY,
-        nome TEXT UNIQUE,
-        vencimento TEXT
+        nome TEXT UNIQUE
     )
 """)
+# Ajuste: garantir coluna vencimento
+try:
+    cursor.execute("ALTER TABLE contas ADD COLUMN vencimento TEXT")
+except sqlite3.OperationalError:
+    pass
+
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY,
