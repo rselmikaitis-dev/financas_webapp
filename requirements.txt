@@ -1,7 +1,7 @@
 streamlit
 pandas
 openpyxl
-xlrd>=2.0.1
+xlrd==1.2.0
 bcrypt
 streamlit-option-menu
 streamlit-aggrid
