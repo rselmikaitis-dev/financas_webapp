@@ -211,10 +211,17 @@ elif menu == "📥 Importação":
                 st.toast(f"Erro ao ler/normalizar o arquivo: {e} ⚠️", icon="⚠️")
                 st.stop()
 
-            mask_not_saldo = ~df["Descrição"].astype(str).str.strip().str.upper().str.startswith("SALDO")
+            # Filtrar apenas linhas válidas
+            mask_not_saldo = ~df["Descrição"].astype(str).str.strip().str.upper().eq("SALDO")
             mask_val_ok = df["ValorNum"].notna()
             df_filtrado = df.loc[mask_not_saldo & mask_val_ok, ["Data", "Descrição", "ValorNum"]].copy()
             df_filtrado.rename(columns={"ValorNum": "Valor"}, inplace=True)
+
+            # Mostrar linhas descartadas
+            descartadas = df.loc[~mask_not_saldo | ~mask_val_ok]
+            if not descartadas.empty:
+                st.warning(f"{len(descartadas)} linhas foram descartadas (SALDO ou valor inválido).")
+                st.dataframe(descartadas.head(10))
 
             # Ajustes para cartão de crédito
             if conta_escolhida.lower().startswith("cartão de crédito"):
