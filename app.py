@@ -51,30 +51,28 @@ def read_df(conn, query, params=()):
     return pd.read_sql_query(query, conn, params=params)
 
 # ---------- Transform Helpers ----------
-def to_lancamentos(df, data_col, desc_col, deb_col, cred_col, origem, conta_nome, cat_col=None):
+def to_lancamentos(df, data_col, desc_col, valor_col, origem, conta_nome, cat_col=None):
     df2 = df.copy()
 
-    # parse date
+    # Ignorar linhas que começam com "SALDO"
+    df2 = df2[~df2[desc_col].astype(str).str.upper().str.startswith("SALDO")]
+
+    # Data
     df2["__data"] = pd.to_datetime(df2[data_col], errors="coerce", dayfirst=True)
 
-    # description
+    # Descrição
     df2["__descricao"] = df2[desc_col].astype(str)
 
-    # value = credit - debit
-    deb_v = pd.to_numeric(df2[deb_col].astype(str)
-                          .str.replace(",", ".", regex=False)
-                          .str.replace("R$", "", regex=False)
-                          .str.replace(".", "", regex=False),
-                          errors="coerce").fillna(0)
+    # Valor (positivo = crédito, negativo = débito)
+    vals = pd.to_numeric(
+        df2[valor_col].astype(str)
+        .str.replace(",", ".", regex=False)
+        .str.replace("R$", "", regex=False)
+        .str.replace(".", "", regex=False),
+        errors="coerce"
+    )
 
-    cred_v = pd.to_numeric(df2[cred_col].astype(str)
-                           .str.replace(",", ".", regex=False)
-                           .str.replace("R$", "", regex=False)
-                           .str.replace(".", "", regex=False),
-                           errors="coerce").fillna(0)
-
-    vals = cred_v - deb_v
-
+    # Categoria (opcional)
     categoria = df2[cat_col].astype(str) if cat_col and cat_col in df2.columns else ""
 
     out = pd.DataFrame({
@@ -84,7 +82,7 @@ def to_lancamentos(df, data_col, desc_col, deb_col, cred_col, origem, conta_nome
         "conta": conta_nome,
         "origem": origem,
         "valor": vals
-    }).dropna(subset=["data"])
+    }).dropna(subset=["data", "valor"])
 
     out["competencia"] = out["data"].dt.strftime("%Y-%m")
     return out
