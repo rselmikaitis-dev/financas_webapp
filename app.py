@@ -62,6 +62,7 @@ cursor.execute("""
         nome TEXT UNIQUE
     )
 """)
+# Garantir coluna dia_vencimento
 try:
     cursor.execute("ALTER TABLE contas ADD COLUMN dia_vencimento INTEGER")
 except sqlite3.OperationalError:
@@ -156,9 +157,10 @@ if menu == "📊 Dashboard":
             saldo = entradas + saidas
 
             st.subheader(f"Resumo {mes_sel:02d}/{ano_sel}")
-            st.metric("Entradas", f"R$ {entradas:,.2f}")
-            st.metric("Saídas", f"R$ {saidas:,.2f}")
-            st.metric("Saldo", f"R$ {saldo:,.2f}")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Entradas", f"R$ {entradas:,.2f}")
+            col2.metric("Saídas", f"R$ {saidas:,.2f}")
+            col3.metric("Saldo", f"R$ {saldo:,.2f}")
 
             st.subheader("Lançamentos do período")
             st.dataframe(
@@ -218,8 +220,11 @@ elif menu == "📥 Importação":
             df_filtrado = df.loc[mask_not_saldo & mask_val_ok, ["Data", "Descrição", "ValorNum"]].copy()
             df_filtrado.rename(columns={"ValorNum": "Valor"}, inplace=True)
 
-            if data_vencimento:
-                df_filtrado["Data"] = to_datestr(data_vencimento)
+            # Ajustes para cartão de crédito
+            if conta_escolhida.lower().startswith("cartão de crédito"):
+                if data_vencimento:
+                    df_filtrado["Data"] = to_datestr(data_vencimento)
+                df_filtrado["Valor"] = df_filtrado["Valor"] * -1
 
             st.markdown("### Pré-visualização")
             st.dataframe(df_filtrado.head(30), use_container_width=True)
