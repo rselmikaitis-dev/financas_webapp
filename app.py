@@ -85,23 +85,37 @@ conn.commit()
 def parse_money(val) -> float | None:
     if pd.isna(val):
         return None
-    s = str(val).strip()
-    if s == "":
+    s = str(val).strip().upper()
+
+    if s in ["", "NAN", "NONE"]:
         return None
+
     neg = False
-    if s.startswith("(") and s.endswith(")"):
+
+    # Trailing negativo (ex: 20741,12-)
+    if s.endswith("-"):
         neg = True
-        s = s[1:-1].strip()
-    s = re.sub(r"[^0-9,.\-+]", "", s)
+        s = s[:-1].strip()
+
+    # Extratos que usam "CR" ou "DÉB"
+    if s.endswith("CR"):
+        s = s.replace("CR", "").strip()
+    elif s.endswith("DB") or "DÉB" in s:
+        neg = True
+        s = s.replace("DB", "").replace("DÉB", "").strip()
+
+    # Valores com vírgula decimal e ponto de milhar
+    s = re.sub(r"[^\d,.-]", "", s)
     if "," in s and "." in s:
         s = s.replace(".", "").replace(",", ".")
     elif "," in s:
         s = s.replace(",", ".")
-    s = re.sub(r"(?<!^)[\+\-]", "", s)
+
     try:
         num = float(s)
     except ValueError:
         return None
+
     return -num if neg else num
 
 # =====================
@@ -196,8 +210,10 @@ elif menu == "📥 Importação":
             try:
                 if arquivo.name.lower().endswith(".csv"):
                     df = pd.read_csv(arquivo, sep=None, engine="python")
+                elif arquivo.name.lower().endswith(".xls"):
+                    df = pd.read_excel(arquivo, engine="xlrd")
                 else:
-                    df = pd.read_excel(arquivo)
+                    df = pd.read_excel(arquivo, engine="openpyxl")
 
                 df = df.iloc[:, :3]
                 df.columns = ["Data", "Descrição", "Valor"]
