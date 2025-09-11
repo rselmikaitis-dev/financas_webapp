@@ -73,7 +73,7 @@ cursor.execute("""
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY,
-        date TEXT,
+        date TEXT,          -- armazenado como string para compatibilidade
         description TEXT,
         value REAL,
         account TEXT
@@ -110,6 +110,7 @@ if menu == "📥 Importação":
         arquivo = st.file_uploader("Selecione o arquivo do extrato ou fatura", type=["xls", "xlsx", "csv"])
 
         if arquivo is not None:
+            # Leitura
             try:
                 if arquivo.name.lower().endswith(".csv"):
                     df = pd.read_csv(arquivo, sep=None, engine="python")
@@ -119,11 +120,13 @@ if menu == "📥 Importação":
                 st.toast(f"Erro ao ler o arquivo: {e} ⚠️", icon="⚠️")
                 st.stop()
 
+            # Seleção de colunas
             colunas = df.columns.tolist()
             st.markdown("### Mapeamento de colunas")
             data_col = st.selectbox("Coluna de Data", options=colunas, key="import_data_col")
             desc_col = st.selectbox("Coluna de Descrição", options=colunas, key="import_desc_col")
 
+            # Valor único OU Débito/Crédito
             if ("Débito" in colunas or "Debito" in colunas) and ("Crédito" in colunas or "Credito" in colunas):
                 deb_col = st.selectbox("Coluna de Débito", options=colunas, key="import_deb_col")
                 cred_col = st.selectbox("Coluna de Crédito", options=colunas, key="import_cred_col")
@@ -132,7 +135,12 @@ if menu == "📥 Importação":
                 valor_col = st.selectbox("Coluna de Valor (+/–)", options=colunas, key="import_val_col")
                 deb_col, cred_col = None, None
 
-            df_filtrado = df[~df[desc_col].astype(str).str.strip().str.upper().str.startswith("SALDO")]
+            # Pré-visualização sem SALDO
+            try:
+                df_filtrado = df[~df[desc_col].astype(str).str.strip().str.upper().str.startswith("SALDO")]
+            except Exception:
+                st.toast("A coluna de descrição selecionada não pôde ser processada ⚠️", icon="⚠️")
+                st.stop()
 
             preview = []
             for _, row in df_filtrado.iterrows():
@@ -196,11 +204,12 @@ elif menu == "📊 Dashboard":
         st.dataframe(df_filt.sort_values("date", ascending=False), use_container_width=True)
 
 # =====================
-# CONTAS
+# CONTAS — GRID + EDITAR/EXCLUIR SIMPLES
 # =====================
 elif menu == "⚙️ Contas":
     st.header("⚙️ Contas")
 
+    # Carregar contas
     cursor.execute("SELECT nome FROM contas ORDER BY nome")
     contas_rows = cursor.fetchall()
     df_contas = pd.DataFrame(contas_rows, columns=["Conta"])
@@ -208,53 +217,69 @@ elif menu == "⚙️ Contas":
     if df_contas.empty:
         st.info("Nenhuma conta cadastrada ainda.")
     else:
+        # Grid somente leitura (edição via formulário explícito abaixo)
         gb = GridOptionsBuilder.from_dataframe(df_contas)
-        gb.configure_default_column(editable=True)
+        gb.configure_default_column(editable=False)
         gb.configure_selection(selection_mode="multiple", use_checkbox=True)
         grid_options = gb.build()
 
         grid = AgGrid(
             df_contas,
             gridOptions=grid_options,
-            update_mode=GridUpdateMode.MODEL_CHANGED,
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
             fit_columns_on_grid_load=True,
             height=280,
             theme="balham"
         )
 
-        # Edição inline
-        updated_df = pd.DataFrame(grid["data"])
-        if not updated_df.equals(df_contas):
-            for old, new in zip(df_contas["Conta"], updated_df["Conta"]):
-                if old != new:
-                    try:
-                        cursor.execute("UPDATE contas SET nome=? WHERE nome=?", (new, old))
-                        cursor.execute("UPDATE transactions SET account=? WHERE account=?", (new, old))
-                        conn.commit()
-                        st.toast(f"Conta renomeada: '{old}' → '{new}' ✅", icon="✏️")
-                        st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.toast(f"Já existe uma conta chamada '{new}' ⚠️", icon="⚠️")
-
-        # Exclusão
+        # Normalizar seleção para lista de dicts
         selected_rows = grid.get("selected_rows", [])
         if isinstance(selected_rows, pd.DataFrame):
             selected_rows = selected_rows.to_dict("records")
+        nomes_sel = [r.get("Conta") for r in selected_rows] if selected_rows else []
 
-        nomes_sel = [r["Conta"] for r in selected_rows] if selected_rows else []
+        # --- EDITAR (seleção única)
+        st.subheader("Editar conta")
+        if len(nomes_sel) == 0:
+            st.caption("Selecione uma conta no grid para editar.")
+        elif len(nomes_sel) > 1:
+            st.caption("Selecione apenas **uma** conta para editar.")
+        else:
+            old_name = nomes_sel[0]
+            new_name = st.text_input("Novo nome", value=old_name, key=f"edit_{old_name}")
+            if st.button("Salvar alteração"):
+                new_name_clean = new_name.strip()
+                if not new_name_clean:
+                    st.toast("O nome não pode ser vazio ⚠️", icon="⚠️")
+                elif new_name_clean == old_name:
+                    st.toast("Nenhuma alteração realizada ℹ️", icon="ℹ️")
+                else:
+                    try:
+                        cursor.execute("UPDATE contas SET nome=? WHERE nome=?", (new_name_clean, old_name))
+                        cursor.execute("UPDATE transactions SET account=? WHERE account=?", (new_name_clean, old_name))
+                        conn.commit()
+                        st.toast(f"Conta renomeada: '{old_name}' → '{new_name_clean}' ✅", icon="✏️")
+                        st.rerun()
+                    except sqlite3.IntegrityError:
+                        st.toast(f"Já existe uma conta chamada '{new_name_clean}' ⚠️", icon="⚠️")
 
-        if nomes_sel:
-            st.warning(f"Selecionadas para exclusão: {', '.join(nomes_sel)}")
-            confirm = st.checkbox("Confirmar exclusão")
-            if confirm and st.button("Excluir selecionadas"):
-                for nome in nomes_sel:
-                    cursor.execute("DELETE FROM transactions WHERE account=?", (nome,))
-                    cursor.execute("DELETE FROM contas WHERE nome=?", (nome,))
-                conn.commit()
-                st.toast("Contas excluídas com sucesso 🗑️", icon="🗑️")
-                st.rerun()
+        # --- EXCLUIR (seleção múltipla, simples)
+        st.subheader("Excluir contas")
+        if not nomes_sel:
+            st.caption("Selecione uma ou mais contas no grid para excluir.")
+        else:
+            if st.button("Excluir selecionadas"):
+                try:
+                    for nome in nomes_sel:
+                        cursor.execute("DELETE FROM transactions WHERE account=?", (nome,))
+                        cursor.execute("DELETE FROM contas WHERE nome=?", (nome,))
+                    conn.commit()
+                    st.toast("Contas excluídas com sucesso 🗑️", icon="🗑️")
+                    st.rerun()
+                except Exception as e:
+                    st.toast(f"Erro ao excluir: {e} ⚠️", icon="⚠️")
 
-    # Adicionar nova conta
+    # --- Adicionar nova conta
     st.subheader("Adicionar nova conta")
     nova = st.text_input("Nome da nova conta:")
     if st.button("Adicionar conta"):
