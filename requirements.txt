@@ -4,3 +4,4 @@ openpyxl
 xlrd>=2.0.1
 bcrypt
 streamlit-option-menu
+streamlit-aggrid
