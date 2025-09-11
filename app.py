@@ -12,11 +12,10 @@ st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="w
 # =====================
 # AUTENTICAÇÃO
 # =====================
-
 AUTH_USERNAME = st.secrets.get("AUTH_USERNAME", "rafael")
 AUTH_PASSWORD_BCRYPT = st.secrets.get(
     "AUTH_PASSWORD_BCRYPT",
-    "$2b$12$abcdefghijklmnopqrstuv1234567890abcdefghijklmnopqrstuv12"  # substitua pelo seu hash
+    "$2b$12$abcdefghijklmnopqrstuv1234567890abcdefghijklmnopqrstuv12"
 )
 
 def check_password(plain: str, hashed: str) -> bool:
@@ -38,20 +37,11 @@ def login_view():
             else:
                 st.toast("Usuário ou senha inválidos ⚠️", icon="⚠️")
 
-    with st.expander("Gerar hash bcrypt (para configurar Secrets)"):
-        new_pass = st.text_input("Digite a senha para gerar hash", type="password")
-        if st.button("Gerar hash bcrypt"):
-            if new_pass:
-                hashed = bcrypt.hashpw(new_pass.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-                st.code(hashed, language="text")
-            else:
-                st.toast("Digite uma senha ⚠️", icon="⚠️")
-
 if "auth_ok" not in st.session_state or not st.session_state["auth_ok"]:
     login_view()
     st.stop()
 
-# Botão de logout no topo
+# Botão de logout
 logout_col = st.columns(8)[-1]
 with logout_col:
     if st.button("Sair", type="secondary"):
@@ -72,7 +62,6 @@ cursor.execute("""
         nome TEXT UNIQUE
     )
 """)
-# Garantir coluna dia_vencimento
 try:
     cursor.execute("ALTER TABLE contas ADD COLUMN dia_vencimento INTEGER")
 except sqlite3.OperationalError:
@@ -127,18 +116,61 @@ def parse_money(val) -> float | None:
 with st.sidebar:
     menu = option_menu(
         "Menu",
-        ["📥 Importação", "📊 Dashboard", "⚙️ Contas"],
-        icons=["cloud-upload", "bar-chart", "gear"],
+        ["📊 Dashboard", "📥 Importação", "⚙️ Contas"],
+        icons=["bar-chart", "cloud-upload", "gear"],
         menu_icon="cast",
         default_index=0,
         orientation="vertical"
     )
 
 # =====================
+# DASHBOARD
+# =====================
+if menu == "📊 Dashboard":
+    st.header("📊 Dashboard Financeiro")
+
+    df_lanc = pd.read_sql_query("SELECT date, description, value, account FROM transactions", conn)
+    if df_lanc.empty:
+        st.info("Nenhum lançamento encontrado.")
+    else:
+        # Seleção de mês e ano
+        col1, col2 = st.columns(2)
+        with col1:
+            mes_sel = st.number_input("Mês", min_value=1, max_value=12, value=datetime.today().month)
+        with col2:
+            ano_sel = st.number_input("Ano", min_value=2000, max_value=2100, value=datetime.today().year)
+
+        # Converter datas
+        df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
+        df_lanc = df_lanc.dropna(subset=["date"])
+
+        # Filtro por mês/ano
+        df_mes = df_lanc[(df_lanc["date"].dt.month == mes_sel) & (df_lanc["date"].dt.year == ano_sel)]
+
+        if df_mes.empty:
+            st.warning(f"Nenhum lançamento encontrado para {mes_sel:02d}/{ano_sel}.")
+        else:
+            # Resumo entradas/saídas
+            entradas = df_mes[df_mes["value"] > 0]["value"].sum()
+            saidas = df_mes[df_mes["value"] < 0]["value"].sum()
+            saldo = entradas + saidas
+
+            st.subheader(f"Resumo {mes_sel:02d}/{ano_sel}")
+            st.metric("Entradas", f"R$ {entradas:,.2f}")
+            st.metric("Saídas", f"R$ {saidas:,.2f}")
+            st.metric("Saldo", f"R$ {saldo:,.2f}")
+
+            st.subheader("Lançamentos do período")
+            st.dataframe(
+                df_mes.sort_values("date", ascending=False),
+                use_container_width=True
+            )
+
+# =====================
 # IMPORTAÇÃO
 # =====================
-if menu == "📥 Importação":
-    st.header("Importação de Lançamentos")
+elif menu == "📥 Importação":
+    st.header("📥 Importação de Lançamentos")
 
     cursor.execute("SELECT nome FROM contas ORDER BY nome")
     contas_cadastradas = [row[0] for row in cursor.fetchall()]
@@ -173,15 +205,10 @@ if menu == "📥 Importação":
                 else:
                     df = pd.read_excel(arquivo)
 
-                if df.shape[1] < 3:
-                    st.toast("Arquivo com menos de 3 colunas. Esperado: Data, Descrição, Valor ⚠️", icon="⚠️")
-                    st.stop()
                 df = df.iloc[:, :3]
                 df.columns = ["Data", "Descrição", "Valor"]
-
                 df["Data"] = df["Data"].apply(to_datestr)
                 df["ValorNum"] = df["Valor"].apply(parse_money)
-
             except Exception as e:
                 st.toast(f"Erro ao ler/normalizar o arquivo: {e} ⚠️", icon="⚠️")
                 st.stop()
@@ -208,33 +235,6 @@ if menu == "📥 Importação":
                     st.toast(f"{len(df_filtrado)} lançamentos importados para {conta_escolhida} 💰", icon="📥")
                 except Exception as e:
                     st.toast(f"Falha na importação: {e} ⚠️", icon="⚠️")
-
-# =====================
-# DASHBOARD
-# =====================
-elif menu == "📊 Dashboard":
-    st.header("Dashboard Financeiro")
-
-    df_lanc = pd.read_sql_query("SELECT date, description, value, account FROM transactions", conn)
-    if df_lanc.empty:
-        st.info("Nenhum lançamento encontrado.")
-    else:
-        contas_disp = sorted(df_lanc["account"].unique().tolist())
-        contas_sel = st.multiselect("Filtrar por conta:", options=contas_disp, default=contas_disp)
-        df_filt = df_lanc[df_lanc["account"].isin(contas_sel)]
-
-        incluir_saldo = st.checkbox("Incluir linhas de saldo", value=False)
-        if not incluir_saldo:
-            df_filt = df_filt[~df_filt["description"].astype(str).str.upper().str.startswith("SALDO")]
-
-        resumo = df_filt.groupby("account", as_index=False)["value"].sum()
-        resumo.columns = ["Conta", "Saldo (soma dos valores)"]
-
-        st.subheader("Saldo por Conta")
-        st.dataframe(resumo, use_container_width=True)
-
-        st.subheader("Lançamentos")
-        st.dataframe(df_filt.sort_values("date", ascending=False), use_container_width=True)
 
 # =====================
 # CONTAS
