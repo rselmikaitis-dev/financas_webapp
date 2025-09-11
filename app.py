@@ -95,7 +95,7 @@ with aba_importacao:
         conta_escolhida = st.selectbox("Conta/cartão", options=contas_cadastradas)
         arquivo = st.file_uploader("Selecione o arquivo do extrato ou fatura", type=["xls", "xlsx", "csv"])
 
-        if st.button("Importar") and arquivo:
+        if arquivo is not None:
             try:
                 if arquivo.name.lower().endswith(".csv"):
                     df = pd.read_csv(arquivo, sep=None, engine="python")
@@ -109,42 +109,46 @@ with aba_importacao:
             data_col = st.selectbox("Coluna de Data", options=colunas)
             desc_col = st.selectbox("Coluna de Descrição", options=colunas)
 
-            valor_col = None
-            deb_col = None
-            cred_col = None
-
             if "Débito" in colunas or "Debito" in colunas:
                 deb_col = st.selectbox("Coluna de Débito", options=colunas)
                 cred_col = st.selectbox("Coluna de Crédito", options=colunas)
+                valor_col = None
             else:
                 valor_col = st.selectbox("Coluna de Valor (+/–)", options=colunas)
+                deb_col, cred_col = None, None
 
-            if st.button("Confirmar Importação"):
+            # Pré-visualização (sem SALDO)
+            df_filtrado = df[~df[desc_col].astype(str).str.upper().str.startswith("SALDO")]
+
+            preview = []
+            for _, row in df_filtrado.iterrows():
+                data_str = str(row[data_col]) if not isinstance(row[data_col], str) else row[data_col]
+                descricao = str(row[desc_col])
+
+                if valor_col:
+                    valor = float(row[valor_col]) if pd.notna(row[valor_col]) else 0.0
+                else:
+                    valor = 0.0
+                    if pd.notna(row[cred_col]):
+                        valor += float(row[cred_col])
+                    if pd.notna(row[deb_col]):
+                        valor -= float(row[deb_col])
+
+                preview.append({"Data": data_str, "Descrição": descricao, "Valor": valor, "Conta": conta_escolhida})
+
+            df_preview = pd.DataFrame(preview)
+            st.subheader("Pré-visualização dos lançamentos (linhas SALDO removidas)")
+            st.dataframe(df_preview.head(20), use_container_width=True)
+
+            if st.button(f"Importar para {conta_escolhida}"):
                 try:
-                    df_filtrado = df[~df[desc_col].astype(str).str.upper().str.startswith("SALDO")]
-                    total_importados = 0
-
-                    for _, row in df_filtrado.iterrows():
-                        data_str = str(row[data_col]) if not isinstance(row[data_col], str) else row[data_col]
-                        descricao = str(row[desc_col])
-
-                        if valor_col:
-                            valor = float(row[valor_col]) if pd.notna(row[valor_col]) else 0.0
-                        else:
-                            valor = 0.0
-                            if pd.notna(row[cred_col]):
-                                valor += float(row[cred_col])
-                            if pd.notna(row[deb_col]):
-                                valor -= float(row[deb_col])
-
+                    for _, row in df_preview.iterrows():
                         cursor.execute(
                             "INSERT INTO transactions (date, description, value, account) VALUES (?, ?, ?, ?)",
-                            (data_str, descricao, valor, conta_escolhida)
+                            (row["Data"], row["Descrição"], row["Valor"], row["Conta"])
                         )
-                        total_importados += 1
-
                     conn.commit()
-                    st.success(f"{total_importados} lançamentos importados para a conta **{conta_escolhida}**!")
+                    st.success(f"{len(df_preview)} lançamentos importados para a conta **{conta_escolhida}**!")
                 except Exception as e:
                     st.error(f"Falha na importação: {e}")
 
