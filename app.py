@@ -4,12 +4,70 @@ import numpy as np
 import sqlite3
 from datetime import date
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+import bcrypt
 
 st.set_page_config(page_title="Controle Financeiro Familiar", layout="wide")
 
 DB_PATH = "data.db"
 
-# ---------- Persistence Helpers ----------
+# =========================
+# ====== AUTENTICAÇÃO =====
+# =========================
+
+# Pegue credenciais prioritariamente de st.secrets (ideal no Streamlit Cloud),
+# com fallback para valores do código.
+AUTH_USERNAME = st.secrets.get("AUTH_USERNAME", "rafael")
+AUTH_PASSWORD_BCRYPT = st.secrets.get(
+    "AUTH_PASSWORD_BCRYPT",
+    # Substitua por um hash bcrypt seu (ex.: $2b$12$...):
+    "$2b$12$abcdefghijklmnopqrstuv1234567890abcdefghijklmnopqrstuv12"
+)
+
+def check_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
+
+def login_view():
+    st.title("🔐 Login – Controle Financeiro Familiar")
+    with st.form("login_form", clear_on_submit=False):
+        u = st.text_input("Usuário")
+        p = st.text_input("Senha", type="password")
+        submitted = st.form_submit_button("Entrar")
+        if submitted:
+            if u == AUTH_USERNAME and check_password(p, AUTH_PASSWORD_BCRYPT):
+                st.session_state["auth_ok"] = True
+                st.rerun()
+            else:
+                st.error("Usuário ou senha inválidos.")
+
+    with st.expander("Gerar hash bcrypt (opcional)"):
+        st.caption("Use isto para gerar um hash a partir de uma senha nova e colar em `st.secrets`.")
+        new_pass = st.text_input("Digite a senha para gerar hash", type="password")
+        if st.button("Gerar hash bcrypt"):
+            if not new_pass:
+                st.warning("Informe uma senha.")
+            else:
+                hashed = bcrypt.hashpw(new_pass.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+                st.code(hashed, language="text")
+                st.info("Copie esse hash e configure em `AUTH_PASSWORD_BCRYPT` nos secrets.")
+
+# Gate de autenticação
+if "auth_ok" not in st.session_state or not st.session_state["auth_ok"]:
+    login_view()
+    st.stop()
+
+# Botão de logout no topo
+logout_col = st.columns(8)[-1]
+with logout_col:
+    if st.button("Sair", type="secondary"):
+        st.session_state.clear()
+        st.rerun()
+
+# =========================
+# ====== PERSISTÊNCIA =====
+# =========================
 def get_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.execute("""
@@ -50,35 +108,33 @@ def save_rows(conn, table, rows):
 def read_df(conn, query, params=()):
     return pd.read_sql_query(query, conn, params=params)
 
-# ---------- Transform Helpers ----------
+# =========================
+# ===== NORMALIZAÇÃO =====
+# =========================
+def normalize_numeric_series(series: pd.Series) -> pd.Series:
+    # Trata "R$ 1.234,56", "-1.234,56", "1,234.56", etc.
+    vals = series.astype(str).str.replace("R$", "", regex=False).str.replace(" ", "", regex=False)
+    # Remoção do separador de milhar BR e troca vírgula decimal por ponto
+    vals = vals.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+    # Remoção de vírgulas remanescentes (caso formato en-US)
+    vals = vals.str.replace(",", "", regex=False)
+    return pd.to_numeric(vals, errors="coerce")
+
 def to_lancamentos(df, data_col, desc_col, valor_col, origem, conta_nome, cat_col=None):
     df2 = df.copy()
 
-    # Ignorar linhas cuja descrição começa com "SALDO"
+    # Ignorar linhas que começam com "SALDO" (não apenas visual – também no import)
     if desc_col in df2.columns:
         df2 = df2[~df2[desc_col].astype(str).str.strip().str.upper().str.startswith("SALDO")]
 
-    # Data
+    # Datas
     df2["__data"] = pd.to_datetime(df2[data_col], errors="coerce", dayfirst=True)
 
     # Descrição
     df2["__descricao"] = df2[desc_col].astype(str)
 
     # Valor (positivo = crédito, negativo = débito)
-    # Trata valores como "1.234,56", "-1.234,56", "R$ 1.234,56"
-    vals = (
-        df2[valor_col].astype(str)
-        .str.replace("R$", "", regex=False)
-        .str.replace(" ", "", regex=False)
-    )
-    # Remove separador de milhares brasileiro e americano
-    # Primeiro troca milhar brasileiro "." por nada, depois vírgula decimal por ponto
-    vals = vals.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-
-    # Caso venha no padrão americano "1,234.56": remover vírgulas restantes
-    vals = vals.str.replace(",", "", regex=False)
-
-    vals = pd.to_numeric(vals, errors="coerce")
+    vals = normalize_numeric_series(df2[valor_col])
 
     # Categoria (opcional)
     categoria = df2[cat_col].astype(str) if (cat_col and cat_col in df2.columns) else ""
@@ -95,7 +151,9 @@ def to_lancamentos(df, data_col, desc_col, valor_col, origem, conta_nome, cat_co
     out["competencia"] = out["data"].dt.strftime("%Y-%m")
     return out
 
-# ---------- UI ----------
+# =========================
+# ========= UI ============
+# =========================
 st.title("💸 Controle Financeiro Familiar")
 
 conn = get_conn()
@@ -109,75 +167,74 @@ with tab1:
     uploaded = st.file_uploader("Selecione um arquivo (CSV, XLS, XLSX)", type=["csv", "xls", "xlsx"])
     origem = st.selectbox("Origem do arquivo", ["conta_corrente", "cartao"])
 
-    # Estado de modo de seleção: 'manual' | 'all' | 'none'
-    if "sel_mode" not in st.session_state:
-        st.session_state["sel_mode"] = "manual"
-
     if uploaded is not None:
+        # Carregar arquivo
         try:
             if uploaded.name.lower().endswith(".csv"):
-                df = pd.read_csv(uploaded, sep=None, engine="python")
+                raw_df = pd.read_csv(uploaded, sep=None, engine="python")
             else:
-                df = pd.read_excel(uploaded)
+                raw_df = pd.read_excel(uploaded)
         except Exception as e:
             st.error(f"Erro ao ler arquivo: {e}")
-            df = None
+            raw_df = None
 
-        if df is not None and not df.empty:
-            st.caption("Obs.: Linhas cuja descrição começar com **SALDO** serão **ignoradas** ao importar.")
-            st.write("Prévia dos dados (selecione as linhas para importar ou use os botões abaixo):")
+        if raw_df is not None and not raw_df.empty:
+            st.caption("Obs.: Linhas com descrição iniciando em **SALDO** serão ocultadas e não importadas.")
 
-            gb = GridOptionsBuilder.from_dataframe(df.head(500))
-            gb.configure_selection(selection_mode="multiple", use_checkbox=True)
-            gb.configure_grid_options(rowSelection="multiple")
+            # Mapeamento de colunas ANTES do grid,
+            # para filtrarmos SALDO no DataFrame exibido.
+            cols = raw_df.columns.tolist()
+            # Tentativa de “chute” de colunas
+            cols_lower = {c.lower(): c for c in cols}
+            guess_data = next((cols_lower[k] for k in cols_lower if k in ["data", "date", "lançamento", "lan\u00e7amento", "dt"]), cols[0])
+            guess_desc = next((cols_lower[k] for k in cols_lower if k in ["descricao", "descrição", "description", "history", "detalhe", "lançamento", "lan\u00e7amento"]), cols[min(1, len(cols)-1)])
+            guess_val = next((cols_lower[k] for k in cols_lower if k in ["valor", "valor (r$)", "amount", "valor do lançamento", "vlr"]), cols[min(2, len(cols)-1)])
+
+            data_col = st.selectbox("Coluna de Data", options=cols, index=cols.index(guess_data) if guess_data in cols else 0)
+            desc_col = st.selectbox("Coluna de Descrição", options=cols, index=cols.index(guess_desc) if guess_desc in cols else 0)
+            valor_col = st.selectbox("Coluna de Valor (+/–)", options=cols, index=cols.index(guess_val) if guess_val in cols else 0)
+            cat_col = st.selectbox("Coluna de Categoria (opcional)", options=["<nenhuma>"] + cols)
+
+            # Filtrar SALDO no DataFrame mostrado
+            df_show = raw_df.copy()
+            df_show = df_show[~df_show[desc_col].astype(str).str.strip().str.upper().str.startswith("SALDO")]
+
+            st.write("Prévia dos dados (linhas SALDO removidas):")
+            gb = GridOptionsBuilder.from_dataframe(df_show.head(1000))
+            gb.configure_grid_options(rowSelection="single")  # apenas navegação; sem seleção múltipla
             grid_options = gb.build()
 
-            grid_response = AgGrid(
-                df,
+            AgGrid(
+                df_show,
                 gridOptions=grid_options,
-                update_mode=GridUpdateMode.SELECTION_CHANGED,
+                update_mode=GridUpdateMode.NO_UPDATE,
                 fit_columns_on_grid_load=True,
                 enable_enterprise_modules=False,
                 theme="balham",
                 height=420,
             )
 
-            selected_manual = pd.DataFrame(grid_response.get("selected_rows", []))
+            # Prévia da normalização (subset)
+            try:
+                preview_norm = to_lancamentos(
+                    df_show.head(200),  # só para preview
+                    data_col,
+                    desc_col,
+                    valor_col,
+                    origem=origem,
+                    conta_nome=conta_nome,
+                    cat_col=None if cat_col == "<nenhuma>" else cat_col
+                )
+                st.caption(f"Prévia da normalização (primeiras {min(200, len(df_show))} linhas visíveis): {len(preview_norm)} linha(s).")
+                st.dataframe(preview_norm.head(10), use_container_width=True)
+            except Exception as e:
+                st.warning(f"Não foi possível pré-visualizar a normalização: {e}")
 
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                if st.button("Selecionar tudo", key="btn_all"):
-                    st.session_state["sel_mode"] = "all"
-            with c2:
-                if st.button("Limpar seleção", key="btn_none"):
-                    st.session_state["sel_mode"] = "none"
-            with c3:
-                if st.button("Usar seleção manual do grid", key="btn_manual"):
-                    st.session_state["sel_mode"] = "manual"
-
-            sel_mode = st.session_state["sel_mode"]
-
-            # Decide o conjunto efetivo de linhas a importar
-            if sel_mode == "all":
-                base_sel = df.copy()
-            elif sel_mode == "none":
-                base_sel = df.iloc[0:0].copy()
-            else:
-                base_sel = selected_manual.copy()
-
-            st.markdown(f"**Modo de seleção:** `{sel_mode}` — **{len(base_sel)}** linha(s) atualmente selecionada(s).")
-
-            # Mapear colunas
-            data_col = st.selectbox("Coluna de Data", options=df.columns.tolist(), key="col_data")
-            desc_col = st.selectbox("Coluna de Descrição", options=df.columns.tolist(), key="col_desc")
-            valor_col = st.selectbox("Coluna de Valor (+/–)", options=df.columns.tolist(), key="col_valor")
-            cat_col = st.selectbox("Coluna de Categoria (opcional)", options=["<nenhuma>"] + df.columns.tolist(), key="col_cat")
-
-            # Mostrar quantas linhas restam após regras (saldo e datas/valores válidos)
-            if not base_sel.empty:
+            # Importar tudo (já com SALDO removido)
+            if st.button("Importar tudo (sem SALDO)"):
                 try:
-                    preview_norm = to_lancamentos(
-                        base_sel,
+                    df_norm = to_lancamentos(
+                        df_show,  # SALDO já removido
                         data_col,
                         desc_col,
                         valor_col,
@@ -185,31 +242,12 @@ with tab1:
                         conta_nome=conta_nome,
                         cat_col=None if cat_col == "<nenhuma>" else cat_col
                     )
-                    st.caption(f"Prévia da normalização: {len(preview_norm)} linha(s) seriam importadas após filtros.")
-                    st.dataframe(preview_norm.head(10), use_container_width=True)
-                except Exception as e:
-                    st.warning(f"Não foi possível pré-visualizar a normalização: {e}")
-
-            if st.button("Importar linhas selecionadas", key="btn_import"):
-                try:
-                    if base_sel.empty:
-                        st.warning("Nenhuma linha selecionada!")
+                    rows = df_norm.to_dict(orient="records")
+                    if not rows:
+                        st.warning("Nada para importar após aplicar filtros de data/valor e remover SALDO.")
                     else:
-                        df_norm = to_lancamentos(
-                            base_sel,
-                            data_col,
-                            desc_col,
-                            valor_col,
-                            origem=origem,
-                            conta_nome=conta_nome,
-                            cat_col=None if cat_col == "<nenhuma>" else cat_col
-                        )
-                        rows = df_norm.to_dict(orient="records")
-                        if not rows:
-                            st.warning("Nada para importar após aplicar filtros de data/valor e ignorar SALDO.")
-                        else:
-                            n = save_rows(conn, "lancamentos", rows)
-                            st.success(f"{n} lançamentos importados com sucesso.")
+                        n = save_rows(conn, "lancamentos", rows)
+                        st.success(f"{n} lançamentos importados com sucesso.")
                 except Exception as e:
                     st.error(f"Falha na importação: {e}")
 
