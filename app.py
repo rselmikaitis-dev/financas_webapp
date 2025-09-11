@@ -47,6 +47,7 @@ if "auth_ok" not in st.session_state or not st.session_state["auth_ok"]:
     login_view()
     st.stop()
 
+# Botão de logout no topo
 logout_col = st.columns(8)[-1]
 with logout_col:
     if st.button("Sair", type="secondary"):
@@ -79,18 +80,18 @@ cursor.execute("""
 conn.commit()
 
 # =====================
-# ABAS
+# MENU LATERAL
 # =====================
-aba_importacao, aba_dashboard, aba_contas = st.tabs(["📥 Importação", "📊 Dashboard", "⚙️ Contas"])
+menu = st.sidebar.radio("📌 Menu", ["📥 Importação", "📊 Dashboard", "⚙️ Contas"])
 
-# --- Aba Importação
-with aba_importacao:
+# --- Importação
+if menu == "📥 Importação":
     st.header("Importação de Lançamentos")
     cursor.execute("SELECT nome FROM contas")
     contas_cadastradas = [row[0] for row in cursor.fetchall()]
 
     if not contas_cadastradas:
-        st.info("Nenhuma conta cadastrada. Cadastre uma conta na aba ⚙️ Contas antes de importar lançamentos.")
+        st.info("Nenhuma conta cadastrada. Cadastre uma conta na seção ⚙️ Contas antes de importar lançamentos.")
     else:
         conta_escolhida = st.selectbox("Conta/cartão", options=contas_cadastradas)
         arquivo = st.file_uploader("Selecione o arquivo do extrato ou fatura", type=["xls", "xlsx", "csv"])
@@ -117,7 +118,7 @@ with aba_importacao:
                 valor_col = st.selectbox("Coluna de Valor (+/–)", options=colunas)
                 deb_col, cred_col = None, None
 
-            # Pré-visualização (sem SALDO)
+            # Pré-visualização sem SALDO
             df_filtrado = df[~df[desc_col].astype(str).str.upper().str.startswith("SALDO")]
 
             preview = []
@@ -152,9 +153,9 @@ with aba_importacao:
                 except Exception as e:
                     st.error(f"Falha na importação: {e}")
 
-# --- Aba Dashboard
-with aba_dashboard:
-    st.header("Dashboard")
+# --- Dashboard
+elif menu == "📊 Dashboard":
+    st.header("Dashboard Financeiro")
     df_lanc = pd.read_sql_query("SELECT date, description, value, account FROM transactions", conn)
     if df_lanc.empty:
         st.info("Nenhum lançamento encontrado.")
@@ -171,8 +172,8 @@ with aba_dashboard:
         st.subheader("Lançamentos")
         st.dataframe(df_filt.sort_values("date", ascending=False))
 
-# --- Aba Contas
-with aba_contas:
+# --- Contas
+elif menu == "⚙️ Contas":
     st.header("⚙️ Contas")
     cursor.execute("SELECT nome FROM contas ORDER BY nome")
     contas = [r[0] for r in cursor.fetchall()]
