@@ -113,22 +113,25 @@ with tab1:
             st.write("Prévia dos dados:")
             st.dataframe(df.head(20), use_container_width=True)
 
-            data_col = st.selectbox("Coluna de Data", options=df.columns.tolist())
-            desc_col = st.selectbox("Coluna de Descrição", options=df.columns.tolist())
-            deb_col = st.selectbox("Coluna Débito", options=df.columns.tolist())
-            cred_col = st.selectbox("Coluna Crédito", options=df.columns.tolist())
-            cat_col = st.selectbox("Coluna de Categoria (opcional)", options=["<nenhuma>"] + df.columns.tolist())
+           data_col = st.selectbox("Coluna de Data", options=df.columns.tolist())
+desc_col = st.selectbox("Coluna de Descrição", options=df.columns.tolist())
+valor_col = st.selectbox("Coluna de Valor (+/-)", options=df.columns.tolist())
+cat_col = st.selectbox("Coluna de Categoria (opcional)", options=["<nenhuma>"] + df.columns.tolist())
 
-            if st.button("Importar"):
-                try:
-                    df_norm = to_lancamentos(df, data_col, desc_col, deb_col, cred_col,
-                                             origem=origem, conta_nome=conta_nome,
-                                             cat_col=None if cat_col == "<nenhuma>" else cat_col)
-                    rows = df_norm.to_dict(orient="records")
-                    n = save_rows(conn, "lancamentos", rows)
-                    st.success(f"{n} lançamentos importados com sucesso.")
-                except Exception as e:
-                    st.error(f"Falha na importação: {e}")
+if st.button("Importar"):
+    try:
+        df_norm = to_lancamentos(df,
+                                 data_col,
+                                 desc_col,
+                                 valor_col,
+                                 origem=origem,
+                                 conta_nome=conta_nome,
+                                 cat_col=None if cat_col == "<nenhuma>" else cat_col)
+        rows = df_norm.to_dict(orient="records")
+        n = save_rows(conn, "lancamentos", rows)
+        st.success(f"{n} lançamentos importados com sucesso.")
+    except Exception as e:
+        st.error(f"Falha na importação: {e}")
 
 # --- Painel
 with tab2:
