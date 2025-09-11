@@ -82,7 +82,7 @@ cursor.execute("""
 conn.commit()
 
 # =====================
-# MENU LATERAL MODERNO
+# MENU LATERAL
 # =====================
 with st.sidebar:
     menu = option_menu(
@@ -95,7 +95,7 @@ with st.sidebar:
     )
 
 # =====================
-# IMPORTAÇÃO (3 colunas fixas: Data, Descrição, Valor)
+# IMPORTAÇÃO
 # =====================
 if menu == "📥 Importação":
     st.header("Importação de Lançamentos")
@@ -107,27 +107,31 @@ if menu == "📥 Importação":
         st.info("Nenhuma conta cadastrada. Cadastre uma conta na seção ⚙️ Contas antes de importar lançamentos.")
     else:
         conta_escolhida = st.selectbox("Conta/cartão", options=contas_cadastradas)
+
+        # Se for cartão de crédito, perguntar vencimento
+        data_vencimento = None
+        if conta_escolhida.lower().startswith("cartão de crédito"):
+            data_vencimento = st.date_input("Data de vencimento do cartão", key="vencimento_cartao")
+
         arquivo = st.file_uploader("Selecione o arquivo (3 colunas: Data, Descrição, Valor)", type=["xls", "xlsx", "csv"])
 
         if arquivo is not None:
             try:
-                # Leitura com header
                 if arquivo.name.lower().endswith(".csv"):
                     df = pd.read_csv(arquivo)
                 else:
                     df = pd.read_excel(arquivo)
 
-                # Forçar apenas 3 colunas
                 df = df.iloc[:, :3]
                 df.columns = ["Data", "Descrição", "Valor"]
 
-                # Limpar coluna de valor
+                # Normalizar valores
                 df["Valor"] = (
                     df["Valor"]
                     .astype(str)
                     .str.replace("R$", "", regex=False)
-                    .str.replace(".", "", regex=False)   # remove separador de milhar
-                    .str.replace(",", ".", regex=False)  # vírgula → ponto
+                    .str.replace(".", "", regex=False)
+                    .str.replace(",", ".", regex=False)
                     .str.strip()
                 )
                 df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
@@ -136,7 +140,7 @@ if menu == "📥 Importação":
                 st.toast(f"Erro ao ler o arquivo: {e} ⚠️", icon="⚠️")
                 st.stop()
 
-            # Remove linhas "SALDO"
+            # Remove "SALDO"
             df_filtrado = df[~df["Descrição"].astype(str).str.strip().str.upper().str.startswith("SALDO")]
 
             st.markdown("### Pré-visualização")
@@ -145,9 +149,11 @@ if menu == "📥 Importação":
             if st.button(f"Importar para {conta_escolhida}"):
                 try:
                     for _, row in df_filtrado.iterrows():
+                        # Se for cartão, usar a data de vencimento
+                        data_final = data_vencimento if data_vencimento else row["Data"]
                         cursor.execute(
                             "INSERT INTO transactions (date, description, value, account) VALUES (?, ?, ?, ?)",
-                            (str(row["Data"]), str(row["Descrição"]), float(row["Valor"]), conta_escolhida)
+                            (str(data_final), str(row["Descrição"]), float(row["Valor"]), conta_escolhida)
                         )
                     conn.commit()
                     st.toast(f"{len(df_filtrado)} lançamentos importados para {conta_escolhida} 💰", icon="📥")
@@ -182,12 +188,11 @@ elif menu == "📊 Dashboard":
         st.dataframe(df_filt.sort_values("date", ascending=False), use_container_width=True)
 
 # =====================
-# CONTAS — GRID + EDITAR/EXCLUIR SIMPLES
+# CONTAS
 # =====================
 elif menu == "⚙️ Contas":
     st.header("⚙️ Contas")
 
-    # Carregar contas
     cursor.execute("SELECT nome FROM contas ORDER BY nome")
     contas_rows = cursor.fetchall()
     df_contas = pd.DataFrame(contas_rows, columns=["Conta"])
@@ -214,7 +219,7 @@ elif menu == "⚙️ Contas":
             selected_rows = selected_rows.to_dict("records")
         nomes_sel = [r.get("Conta") for r in selected_rows] if selected_rows else []
 
-        # --- EDITAR (uma conta por vez)
+        # Editar
         st.subheader("Editar conta")
         if len(nomes_sel) == 1:
             old_name = nomes_sel[0]
@@ -239,7 +244,7 @@ elif menu == "⚙️ Contas":
         else:
             st.caption("Selecione uma conta no grid para editar.")
 
-        # --- EXCLUIR (múltiplas contas)
+        # Excluir
         st.subheader("Excluir contas")
         if nomes_sel:
             if st.button("Excluir selecionadas"):
@@ -255,7 +260,7 @@ elif menu == "⚙️ Contas":
         else:
             st.caption("Selecione uma ou mais contas no grid para excluir.")
 
-    # --- Adicionar nova conta
+    # Adicionar nova
     st.subheader("Adicionar nova conta")
     nova = st.text_input("Nome da nova conta:")
     if st.button("Adicionar conta"):
