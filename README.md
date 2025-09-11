@@ -1,4 +1,4 @@
-# Controle Financeiro Familiar (MVP)
+# Controle Financeiro
 
 Web app em **Streamlit** com **login (bcrypt)** para importar extratos de **conta corrente** e **faturas de cartão** (CSV/XLS/XLSX), consolidar gastos por competência e registrar **provisões**.
 
