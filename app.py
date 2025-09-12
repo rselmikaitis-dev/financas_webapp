@@ -297,6 +297,8 @@ elif menu == "Configurações":
         categorias_rows = cursor.fetchall()
         df_cat = pd.DataFrame(categorias_rows, columns=["ID", "Tipo", "Subtipo"])
 
+        ids_sel = []  # inicializa para evitar NameError
+
         if df_cat.empty:
             st.info("Nenhuma categoria cadastrada ainda.")
         else:
