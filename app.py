@@ -298,6 +298,8 @@ elif menu == "Importação":
                           fit_columns_on_grid_load=True, height=420, theme="balham")
 
             df_editado = pd.DataFrame(grid["data"])
+            st.subheader("Prévia após edição no grid")
+            st.dataframe(df_editado.head(20))
 
             if st.button("Importar lançamentos"):
                 inserted = 0
