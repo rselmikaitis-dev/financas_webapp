@@ -249,6 +249,9 @@ elif menu == "Lançamentos":
 
     df_editado = pd.DataFrame(grid["data"])
 
+    # total de linhas exibidas
+    st.markdown(f"**Total de lançamentos exibidos: {len(df_grid)}**")
+
     if st.button("Salvar alterações"):
         updated = 0
         for i, row in df_editado.iterrows():
