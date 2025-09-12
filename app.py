@@ -158,15 +158,22 @@ elif menu=="Lançamentos":
     if conta_sel!="Todas":
         df_filtrado=df_filtrado[df_filtrado["account"]==conta_sel]
     st.dataframe(df_filtrado,use_container_width=True)
+
 # =====================
 # IMPORTAÇÃO
 # =====================
 elif menu == "Importação":
     st.header("Importação de Lançamentos")
 
+    # Mensagem de sucesso persistente
+    if "msg_sucesso_import" in st.session_state:
+        st.success(st.session_state["msg_sucesso_import"])
+        if st.button("OK"):
+            del st.session_state["msg_sucesso_import"]
+        st.stop()
+
     # Função auxiliar para tratar datas vindas do grid
     def _coerce_to_pydate(x):
-        """Converte valores vindos do AgGrid (dict/str/Timestamp) para date ou None."""
         if x is None or (isinstance(x, float) and pd.isna(x)):
             return None
         if isinstance(x, pd.Timestamp):
@@ -207,8 +214,6 @@ elif menu == "Importação":
     if arquivo is not None:
         try:
             df = _read_uploaded(arquivo)
-
-            # limpar cabeçalhos e normalizar
             df.columns = [c.strip().lower().replace("\ufeff", "") for c in df.columns]
 
             mapa_colunas = {
@@ -238,21 +243,16 @@ elif menu == "Importação":
                 col_map["valor"]: "Valor"
             })
 
-            # remover linhas de saldo
             df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
-
-            # conversões
             df["Data"] = df["Data"].apply(parse_date)
             df["Valor"] = df["Valor"].apply(parse_money)
 
-            # selecionar conta
             contas = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
             if not contas:
                 st.error("Nenhuma conta cadastrada. Vá em Configurações → Contas.")
                 st.stop()
             conta_sel = st.selectbox("Selecione a conta destino", contas)
 
-            # se for cartão de crédito → perguntar mês/ano da fatura
             mes_ref_cc, ano_ref_cc, dia_venc_cc = None, None, None
             if conta_sel.lower().startswith("cartão de crédito"):
                 cursor.execute("SELECT dia_vencimento FROM contas WHERE nome=?", (conta_sel,))
@@ -261,7 +261,6 @@ elif menu == "Importação":
                 st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: {dia_venc_cc}.")
                 mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
 
-            # carregar categorias e subcategorias
             cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
             categorias = cursor.fetchall()
             cat_map = {c[1]: c[0] for c in categorias}
@@ -276,19 +275,16 @@ elif menu == "Importação":
             for sid, s_nome, c_nome in cursor.fetchall():
                 subcat_map[f"{c_nome} → {s_nome}"] = sid
 
-            # garantir colunas Categoria e Subcategoria
             if "Categoria" not in df.columns:
                 df["Categoria"] = "Nenhuma"
             if "Subcategoria" not in df.columns:
                 df["Subcategoria"] = "Nenhuma"
 
-            # ordenar colunas
             ordem = ["Data", "Descrição", "Valor", "Categoria", "Subcategoria"]
             cols_existentes = [c for c in ordem if c in df.columns]
             cols_restantes = [c for c in df.columns if c not in ordem]
             df = df[cols_existentes + cols_restantes]
 
-            # grade de pré-visualização
             gb = GridOptionsBuilder.from_dataframe(df)
             gb.configure_default_column(editable=False)
             gb.configure_column("Categoria", editable=True,
@@ -312,7 +308,6 @@ elif menu == "Importação":
 
                     if val is None:
                         continue
-
                     try:
                         valf = float(val)
                     except Exception:
@@ -320,18 +315,22 @@ elif menu == "Importação":
                         if valf is None:
                             continue
 
-                    # se for cartão de crédito
                     if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
                         dia = min(dia_venc_cc, ultimo_dia_do_mes(ano_ref_cc, mes_ref_cc))
                         dt_obj = date(ano_ref_cc, mes_ref_cc, dia)
-                        valf = -valf  # inverter sinal
+                        valf = -valf
                     else:
                         dt_obj = _coerce_to_pydate(dt_raw)
 
                     if not isinstance(dt_obj, date):
                         continue
 
-                    sub_id = subcat_map.get(row.get("Subcategoria", "Nenhuma"), None)
+                    cat_sel_grid = row.get("Categoria", "Nenhuma")
+                    sub_sel_grid = row.get("Subcategoria", "Nenhuma")
+
+                    sub_id = None
+                    if sub_sel_grid != "Nenhuma":
+                        sub_id = subcat_map.get(sub_sel_grid)
 
                     cursor.execute("""
                         INSERT INTO transactions (date, description, value, account, subcategoria_id)
@@ -344,8 +343,9 @@ elif menu == "Importação":
                         sub_id
                     ))
                     inserted += 1
+
                 conn.commit()
-                st.success(f"{inserted} lançamentos importados com sucesso!")
+                st.session_state["msg_sucesso_import"] = f"{inserted} lançamentos importados com sucesso!"
                 st.rerun()
         except Exception as e:
             st.error(f"Erro ao importar: {e}")
