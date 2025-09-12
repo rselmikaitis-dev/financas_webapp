@@ -185,13 +185,57 @@ elif menu == "Lançamentos":
     # formatar Data como string legível
     df_lanc["Data"] = pd.to_datetime(df_lanc["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
 
+    # criar colunas auxiliares para filtros
+    df_lanc["Ano"] = pd.to_datetime(df_lanc["Data"], errors="coerce", dayfirst=True).dt.year
+    df_lanc["Mês"] = pd.to_datetime(df_lanc["Data"], errors="coerce", dayfirst=True).dt.month
+
+    # filtros
+    col1, col2, col3, col4, col5 = st.columns(5)
+
+    # conta
+    contas = ["Todas"] + sorted(df_lanc["Conta"].dropna().unique().tolist())
+    conta_filtro = col1.selectbox("Conta", contas)
+
+    # categorias/subcategorias
+    cats = ["Todas"] + sorted({k.split(" → ")[0] for k in cat_sub_map if k != "Nenhuma"})
+    cat_filtro = col2.selectbox("Categoria", cats)
+
+    subs = ["Todas"]
+    if cat_filtro != "Todas":
+        subs += sorted({k for k in cat_sub_map if k.startswith(cat_filtro + " →")})
+    else:
+        subs += sorted([k for k in cat_sub_map if k != "Nenhuma"])
+    sub_filtro = col3.selectbox("Subcategoria", subs)
+
+    # ano e mês
+    anos = ["Todos"] + sorted(df_lanc["Ano"].dropna().unique().astype(int).tolist())
+    ano_filtro = col4.selectbox("Ano", anos)
+
+    meses = ["Todos"] + list(range(1, 13))
+    mes_filtro = col5.selectbox("Mês", meses)
+
+    # aplicar filtros
+    if conta_filtro != "Todas":
+        df_lanc = df_lanc[df_lanc["Conta"] == conta_filtro]
+    if cat_filtro != "Todas":
+        df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"].str.startswith(cat_filtro)]
+    if sub_filtro != "Todas":
+        df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"] == sub_filtro]
+    if ano_filtro != "Todos":
+        df_lanc = df_lanc[df_lanc["Ano"] == ano_filtro]
+    if mes_filtro != "Todos":
+        df_lanc = df_lanc[df_lanc["Mês"] == mes_filtro]
+
+    # remover colunas técnicas antes do grid
+    df_grid = df_lanc.drop(columns=["id", "subcategoria_id", "Ano", "Mês"], errors="ignore")
+
     # grid para edição de categoria/subcategoria
-    gb = GridOptionsBuilder.from_dataframe(df_lanc)
+    gb = GridOptionsBuilder.from_dataframe(df_grid)
     gb.configure_default_column(editable=False)
     gb.configure_column("Categoria/Subcategoria", editable=True,
                         cellEditor="agSelectCellEditor",
                         cellEditorParams={"values": list(cat_sub_map.keys())})
-    grid = AgGrid(df_lanc, gridOptions=gb.build(),
+    grid = AgGrid(df_grid, gridOptions=gb.build(),
                   update_mode=GridUpdateMode.VALUE_CHANGED,
                   fit_columns_on_grid_load=True, height=420, theme="balham")
 
@@ -201,171 +245,11 @@ elif menu == "Lançamentos":
         updated = 0
         for _, row in df_editado.iterrows():
             sub_id = cat_sub_map.get(row.get("Categoria/Subcategoria", "Nenhuma"), None)
-            cursor.execute("UPDATE transactions SET subcategoria_id=? WHERE id=?", (sub_id, row["id"]))
+            cursor.execute("UPDATE transactions SET subcategoria_id=? WHERE id=?", (sub_id, df_lanc.iloc[_]["id"]))
             updated += 1
         conn.commit()
         st.success(f"{updated} lançamentos atualizados com sucesso!")
         st.rerun()
-
-# =====================
-# IMPORTAÇÃO
-# =====================
-elif menu == "Importação":
-    st.header("Importação de Lançamentos")
-
-    # Mensagem de sucesso persistente
-    if "msg_sucesso_import" in st.session_state:
-        st.success(st.session_state["msg_sucesso_import"])
-        if st.button("OK"):
-            del st.session_state["msg_sucesso_import"]
-        st.stop()
-
-    arquivo = st.file_uploader("Selecione o arquivo (CSV, XLSX ou XLS)", type=["csv", "xlsx", "xls"])
-
-    def _read_uploaded(file):
-        name = file.name.lower()
-        if name.endswith(".csv"):
-            return pd.read_csv(file, sep=None, engine="python", dtype=str)
-        if name.endswith(".xlsx"):
-            return pd.read_excel(file, engine="openpyxl", dtype=str)
-        if name.endswith(".xls"):
-            return pd.read_excel(file, engine="xlrd", dtype=str)
-        raise RuntimeError("Formato não suportado.")
-
-    if arquivo is not None:
-        try:
-            df = _read_uploaded(arquivo)
-            df.columns = [c.strip().lower().replace("\ufeff", "") for c in df.columns]
-
-            mapa_colunas = {
-                "data": ["data", "data lançamento", "data lancamento", "dt", "lançamento", "data mov", "data movimento"],
-                "descrição": ["descrição", "descricao", "descricão", "histórico", "historico", "detalhe", "hist", "descricao/historico", "lançamento", "lancamento"],
-                "valor": ["valor", "valor (r$)", "valor r$", "vlr", "amount", "valorlancamento", "valor lancamento"]
-            }
-
-            col_map = {}
-            for alvo, poss in mapa_colunas.items():
-                for p in poss:
-                    if p in df.columns:
-                        col_map[alvo] = p
-                        break
-
-            if "data" not in col_map or "valor" not in col_map:
-                st.error(f"Arquivo inválido. Colunas lidas: {list(df.columns)}")
-                st.stop()
-
-            if "descrição" not in col_map:
-                df["descrição"] = ""
-                col_map["descrição"] = "descrição"
-
-            df = df.rename(columns={
-                col_map["data"]: "Data",
-                col_map["descrição"]: "Descrição",
-                col_map["valor"]: "Valor"
-            })
-
-            df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
-
-            # conversões
-            df["Data"] = df["Data"].apply(parse_date)
-            df["Data"] = df["Data"].apply(lambda x: x.strftime("%d/%m/%Y") if isinstance(x, (datetime, date)) else str(x))
-            df["Valor"] = df["Valor"].apply(parse_money)
-
-            # selecionar conta
-            contas = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
-            if not contas:
-                st.error("Nenhuma conta cadastrada. Vá em Configurações → Contas.")
-                st.stop()
-            conta_sel = st.selectbox("Selecione a conta destino", contas)
-
-            # se for cartão de crédito → perguntar mês/ano da fatura
-            mes_ref_cc, ano_ref_cc, dia_venc_cc = None, None, None
-            if conta_sel.lower().startswith("cartão de crédito"):
-                cursor.execute("SELECT dia_vencimento FROM contas WHERE nome=?", (conta_sel,))
-                row = cursor.fetchone()
-                dia_venc_cc = row[0] if row and row[0] else 1
-                st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: {dia_venc_cc}.")
-                mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
-
-            # carregar categorias/subcategorias combinadas
-            cursor.execute("""
-                SELECT s.id, s.nome, c.nome
-                FROM subcategorias s
-                JOIN categorias c ON s.categoria_id = c.id
-                ORDER BY c.nome, s.nome
-            """)
-            cat_sub_map = {"Nenhuma": None}
-            for sid, s_nome, c_nome in cursor.fetchall():
-                cat_sub_map[f"{c_nome} → {s_nome}"] = sid
-
-            # garantir coluna combinada
-            if "Categoria/Subcategoria" not in df.columns:
-                df["Categoria/Subcategoria"] = "Nenhuma"
-
-            # ordenar colunas
-            ordem = ["Data", "Descrição", "Valor", "Categoria/Subcategoria"]
-            cols_existentes = [c for c in ordem if c in df.columns]
-            cols_restantes = [c for c in df.columns if c not in ordem]
-            df = df[cols_existentes + cols_restantes]
-
-            # grid de pré-visualização
-            gb = GridOptionsBuilder.from_dataframe(df)
-            gb.configure_default_column(editable=False)
-            gb.configure_column("Categoria/Subcategoria", editable=True,
-                                cellEditor="agSelectCellEditor",
-                                cellEditorParams={"values": list(cat_sub_map.keys())})
-            grid = AgGrid(df, gridOptions=gb.build(),
-                          update_mode=GridUpdateMode.VALUE_CHANGED,
-                          fit_columns_on_grid_load=True, height=420, theme="balham")
-
-            df_editado = pd.DataFrame(grid["data"])
-
-            if st.button("Importar lançamentos"):
-                inserted = 0
-                for _, row in df_editado.iterrows():
-                    desc = str(row["Descrição"])
-                    val = row["Valor"]
-                    dt_raw = row["Data"]
-
-                    if val is None:
-                        continue
-                    try:
-                        valf = float(val)
-                    except Exception:
-                        valf = parse_money(val)
-                        if valf is None:
-                            continue
-
-                    if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
-                        dia = min(dia_venc_cc, ultimo_dia_do_mes(ano_ref_cc, mes_ref_cc))
-                        dt_obj = date(ano_ref_cc, mes_ref_cc, dia)
-                        valf = -valf
-                    else:
-                        dt_obj = parse_date(dt_raw)
-
-                    if not isinstance(dt_obj, date):
-                        continue
-
-                    cat_sub_sel = row.get("Categoria/Subcategoria", "Nenhuma")
-                    sub_id = cat_sub_map.get(cat_sub_sel, None)
-
-                    cursor.execute("""
-                        INSERT INTO transactions (date, description, value, account, subcategoria_id)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (
-                        dt_obj.strftime("%Y-%m-%d"),
-                        desc,
-                        valf,
-                        conta_sel,
-                        sub_id
-                    ))
-                    inserted += 1
-
-                conn.commit()
-                st.session_state["msg_sucesso_import"] = f"{inserted} lançamentos importados com sucesso!"
-                st.rerun()
-        except Exception as e:
-            st.error(f"Erro ao importar: {e}")
 # =====================
 # CONFIGURAÇÕES
 # =====================
