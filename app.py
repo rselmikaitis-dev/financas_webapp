@@ -25,7 +25,7 @@ def check_password(plain: str, hashed: str) -> bool:
         return False
 
 def login_view():
-    st.title("🔐 Login – Controle Financeiro Familiar")
+    st.title("Login – Controle Financeiro Familiar")
     with st.form("login_form"):
         u = st.text_input("Usuário")
         p = st.text_input("Senha", type="password")
@@ -56,7 +56,6 @@ if "conn" not in st.session_state:
 conn = st.session_state.conn
 cursor = conn.cursor()
 
-# Tabela contas
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS contas (
         id INTEGER PRIMARY KEY,
@@ -65,7 +64,6 @@ cursor.execute("""
     )
 """)
 
-# Tabela categorias
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS categorias (
         id INTEGER PRIMARY KEY,
@@ -75,7 +73,6 @@ cursor.execute("""
     )
 """)
 
-# Tabela lançamentos
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY,
@@ -136,9 +133,9 @@ def seletor_mes_ano(label="Período", data_default=None):
 with st.sidebar:
     menu = option_menu(
         "Menu",
-        ["📊 Dashboard", "📑 Lançamentos", "📥 Importação", "⚙️ Configurações"],
-        icons=["bar-chart", "list-columns", "cloud-upload", "gear"],
-        menu_icon="cast",
+        ["Dashboard", "Lançamentos", "Importação", "Configurações"],
+        menu_icon=None,
+        icons=["", "", "", ""],
         default_index=0,
         orientation="vertical"
     )
@@ -146,8 +143,8 @@ with st.sidebar:
 # =====================
 # DASHBOARD
 # =====================
-if menu == "📊 Dashboard":
-    st.header("📊 Dashboard Financeiro")
+if menu == "Dashboard":
+    st.header("Dashboard Financeiro")
 
     df_lanc = pd.read_sql_query("SELECT date, description, value, account FROM transactions", conn)
     if df_lanc.empty:
@@ -176,8 +173,8 @@ if menu == "📊 Dashboard":
 # =====================
 # LANÇAMENTOS
 # =====================
-elif menu == "📑 Lançamentos":
-    st.header("📑 Lançamentos por período")
+elif menu == "Lançamentos":
+    st.header("Lançamentos por período")
 
     mes_ref, ano_ref = seletor_mes_ano("Lançamentos", date.today())
 
@@ -207,19 +204,20 @@ elif menu == "📑 Lançamentos":
 # =====================
 # IMPORTAÇÃO
 # =====================
-elif menu == "📥 Importação":
-    st.header("📥 Importação de Lançamentos")
+elif menu == "Importação":
+    st.header("Importação de Lançamentos")
     st.info("Importação mantém os mesmos fluxos de antes (sem categoria atribuída ainda).")
 
 # =====================
 # CONFIGURAÇÕES
 # =====================
-elif menu == "⚙️ Configurações":
-    st.header("⚙️ Configurações")
-    aba = st.radio("Selecione a seção", ["Contas", "Categorias"], horizontal=True)
+elif menu == "Configurações":
+    st.header("Configurações")
+    tab1, tab2 = st.tabs(["Contas", "Categorias"])
 
     # ---- CONTAS ----
-    if aba == "Contas":
+    with tab1:
+        st.subheader("Gerenciar Contas")
         cursor.execute("SELECT nome, dia_vencimento FROM contas ORDER BY nome")
         contas_rows = cursor.fetchall()
         df_contas = pd.DataFrame(contas_rows, columns=["Conta", "Dia Vencimento"])
@@ -246,54 +244,55 @@ elif menu == "⚙️ Configurações":
                 selected_rows = selected_rows.to_dict("records")
             nomes_sel = [r.get("Conta") for r in selected_rows] if selected_rows else []
 
-            st.subheader("Adicionar nova conta")
-            nova = st.text_input("Nome da nova conta:")
-            dia_venc = None
-            if nova.lower().startswith("cartão de crédito"):
-                dia_venc = st.number_input("Dia do vencimento", min_value=1, max_value=31, value=1)
+        st.subheader("Adicionar nova conta")
+        nova = st.text_input("Nome da nova conta:")
+        dia_venc = None
+        if nova.lower().startswith("cartão de crédito"):
+            dia_venc = st.number_input("Dia do vencimento", min_value=1, max_value=31, value=1)
 
-            if st.button("Adicionar conta"):
-                if nova.strip():
+        if st.button("Adicionar conta"):
+            if nova.strip():
+                try:
+                    cursor.execute("INSERT INTO contas (nome, dia_vencimento) VALUES (?, ?)",
+                                   (nova.strip(), dia_venc))
+                    conn.commit()
+                    st.toast(f"Conta '{nova.strip()}' adicionada ➕", icon="💳")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.toast("Essa conta já existe ⚠️", icon="⚠️")
+            else:
+                st.toast("Digite um nome válido ⚠️", icon="⚠️")
+
+        if nomes_sel:
+            st.subheader("Editar/Excluir contas")
+            if len(nomes_sel) == 1:
+                old_name = nomes_sel[0]
+                new_name = st.text_input("Novo nome", value=old_name)
+                new_dia = st.number_input("Novo vencimento", min_value=1, max_value=31, value=1)
+
+                if st.button("Salvar alteração"):
                     try:
-                        cursor.execute("INSERT INTO contas (nome, dia_vencimento) VALUES (?, ?)",
-                                       (nova.strip(), dia_venc))
+                        cursor.execute("UPDATE contas SET nome=?, dia_vencimento=? WHERE nome=?",
+                                       (new_name.strip(), new_dia, old_name))
+                        cursor.execute("UPDATE transactions SET account=? WHERE account=?",
+                                       (new_name.strip(), old_name))
                         conn.commit()
-                        st.toast(f"Conta '{nova.strip()}' adicionada ➕", icon="💳")
+                        st.toast(f"Conta atualizada ✅", icon="✏️")
                         st.rerun()
                     except sqlite3.IntegrityError:
-                        st.toast("Essa conta já existe ⚠️", icon="⚠️")
-                else:
-                    st.toast("Digite um nome válido ⚠️", icon="⚠️")
+                        st.toast(f"Já existe uma conta chamada '{new_name.strip()}' ⚠️", icon="⚠️")
 
-            st.subheader("Editar/Excluir contas")
-            if nomes_sel:
-                if len(nomes_sel) == 1:
-                    old_name = nomes_sel[0]
-                    new_name = st.text_input("Novo nome", value=old_name)
-                    new_dia = st.number_input("Novo vencimento", min_value=1, max_value=31, value=1)
-
-                    if st.button("Salvar alteração"):
-                        try:
-                            cursor.execute("UPDATE contas SET nome=?, dia_vencimento=? WHERE nome=?",
-                                           (new_name.strip(), new_dia, old_name))
-                            cursor.execute("UPDATE transactions SET account=? WHERE account=?",
-                                           (new_name.strip(), old_name))
-                            conn.commit()
-                            st.toast(f"Conta atualizada ✅", icon="✏️")
-                            st.rerun()
-                        except sqlite3.IntegrityError:
-                            st.toast(f"Já existe uma conta chamada '{new_name.strip()}' ⚠️", icon="⚠️")
-
-                if st.button("Excluir selecionadas"):
-                    for nome in nomes_sel:
-                        cursor.execute("DELETE FROM transactions WHERE account=?", (nome,))
-                        cursor.execute("DELETE FROM contas WHERE nome=?", (nome,))
-                    conn.commit()
-                    st.toast("Contas excluídas 🗑️", icon="🗑️")
-                    st.rerun()
+            if st.button("Excluir selecionadas"):
+                for nome in nomes_sel:
+                    cursor.execute("DELETE FROM transactions WHERE account=?", (nome,))
+                    cursor.execute("DELETE FROM contas WHERE nome=?", (nome,))
+                conn.commit()
+                st.toast("Contas excluídas 🗑️", icon="🗑️")
+                st.rerun()
 
     # ---- CATEGORIAS ----
-    elif aba == "Categorias":
+    with tab2:
+        st.subheader("Gerenciar Categorias")
         cursor.execute("SELECT id, tipo, subtipo FROM categorias ORDER BY tipo, subtipo")
         categorias_rows = cursor.fetchall()
         df_cat = pd.DataFrame(categorias_rows, columns=["ID", "Tipo", "Subtipo"])
@@ -320,44 +319,44 @@ elif menu == "⚙️ Configurações":
                 selected_rows = selected_rows.to_dict("records")
             ids_sel = [r.get("ID") for r in selected_rows] if selected_rows else []
 
-            st.subheader("Adicionar nova categoria")
-            tipo = st.text_input("Tipo")
-            subtipo = st.text_input("Subtipo")
+        st.subheader("Adicionar nova categoria")
+        tipo = st.text_input("Tipo")
+        subtipo = st.text_input("Subtipo")
 
-            if st.button("Adicionar categoria"):
-                if tipo.strip() and subtipo.strip():
+        if st.button("Adicionar categoria"):
+            if tipo.strip() and subtipo.strip():
+                try:
+                    cursor.execute("INSERT INTO categorias (tipo, subtipo) VALUES (?, ?)", (tipo.strip(), subtipo.strip()))
+                    conn.commit()
+                    st.toast("Categoria adicionada ➕", icon="📂")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.toast("Essa categoria já existe ⚠️", icon="⚠️")
+            else:
+                st.toast("Preencha todos os campos ⚠️", icon="⚠️")
+
+        if ids_sel:
+            st.subheader("Editar/Excluir categorias")
+            if len(ids_sel) == 1:
+                cat_id = ids_sel[0]
+                old = df_cat[df_cat["ID"] == cat_id].iloc[0]
+                new_tipo = st.text_input("Novo tipo", value=old["Tipo"])
+                new_subtipo = st.text_input("Novo subtipo", value=old["Subtipo"])
+
+                if st.button("Salvar alteração"):
                     try:
-                        cursor.execute("INSERT INTO categorias (tipo, subtipo) VALUES (?, ?)", (tipo.strip(), subtipo.strip()))
+                        cursor.execute("UPDATE categorias SET tipo=?, subtipo=? WHERE id=?",
+                                       (new_tipo.strip(), new_subtipo.strip(), cat_id))
                         conn.commit()
-                        st.toast("Categoria adicionada ➕", icon="📂")
+                        st.toast("Categoria atualizada ✅", icon="✏️")
                         st.rerun()
                     except sqlite3.IntegrityError:
-                        st.toast("Essa categoria já existe ⚠️", icon="⚠️")
-                else:
-                    st.toast("Preencha todos os campos ⚠️", icon="⚠️")
+                        st.toast("Já existe essa categoria ⚠️", icon="⚠️")
 
-            st.subheader("Editar/Excluir categorias")
-            if ids_sel:
-                if len(ids_sel) == 1:
-                    cat_id = ids_sel[0]
-                    old = df_cat[df_cat["ID"] == cat_id].iloc[0]
-                    new_tipo = st.text_input("Novo tipo", value=old["Tipo"])
-                    new_subtipo = st.text_input("Novo subtipo", value=old["Subtipo"])
-
-                    if st.button("Salvar alteração"):
-                        try:
-                            cursor.execute("UPDATE categorias SET tipo=?, subtipo=? WHERE id=?",
-                                           (new_tipo.strip(), new_subtipo.strip(), cat_id))
-                            conn.commit()
-                            st.toast("Categoria atualizada ✅", icon="✏️")
-                            st.rerun()
-                        except sqlite3.IntegrityError:
-                            st.toast("Já existe essa categoria ⚠️", icon="⚠️")
-
-                if st.button("Excluir selecionadas"):
-                    for cid in ids_sel:
-                        cursor.execute("UPDATE transactions SET categoria_id=NULL WHERE categoria_id=?", (cid,))
-                        cursor.execute("DELETE FROM categorias WHERE id=?", (cid,))
-                    conn.commit()
-                    st.toast("Categorias excluídas 🗑️", icon="🗑️")
-                    st.rerun()
+            if st.button("Excluir selecionadas"):
+                for cid in ids_sel:
+                    cursor.execute("UPDATE transactions SET categoria_id=NULL WHERE categoria_id=?", (cid,))
+                    cursor.execute("DELETE FROM categorias WHERE id=?", (cid,))
+                conn.commit()
+                st.toast("Categorias excluídas 🗑️", icon="🗑️")
+                st.rerun()
