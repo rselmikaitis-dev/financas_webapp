@@ -266,57 +266,106 @@ elif menu == "Configurações":
 
     # ---- CATEGORIAS ----
     with tab2:
-        st.subheader("Gerenciar Categorias")
-        cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
-        df_cat = pd.DataFrame(cursor.fetchall(), columns=["ID", "Nome"])
+    st.subheader("Gerenciar Categorias")
+    cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
+    df_cat = pd.DataFrame(cursor.fetchall(), columns=["ID", "Nome"])
 
-        if not df_cat.empty:
-            st.dataframe(df_cat)
+    if not df_cat.empty:
+        st.dataframe(df_cat)
 
-        nova_cat = st.text_input("Nome da nova categoria:")
-        if st.button("Adicionar categoria"):
-            if nova_cat.strip():
+        # Seleção de categoria para editar/excluir
+        cat_sel = st.selectbox("Selecione uma categoria para editar/excluir", df_cat["Nome"])
+
+        # Editar
+        new_name = st.text_input("Novo nome da categoria", value=cat_sel)
+        if st.button("Salvar alteração de categoria"):
+            try:
+                cursor.execute("UPDATE categorias SET nome=? WHERE nome=?", (new_name.strip(), cat_sel))
+                conn.commit()
+                st.success("Categoria atualizada!")
+                st.rerun()
+            except sqlite3.IntegrityError:
+                st.error("Já existe uma categoria com esse nome.")
+
+        # Excluir
+        if st.button("Excluir categoria selecionada"):
+            cursor.execute("DELETE FROM categorias WHERE nome=?", (cat_sel,))
+            conn.commit()
+            st.warning("Categoria excluída (as subcategorias vinculadas também foram removidas).")
+            st.rerun()
+    else:
+        st.info("Nenhuma categoria cadastrada ainda.")
+
+    nova_cat = st.text_input("Nome da nova categoria:")
+    if st.button("Adicionar categoria"):
+        if nova_cat.strip():
+            try:
+                cursor.execute("INSERT INTO categorias (nome) VALUES (?)", (nova_cat.strip(),))
+                conn.commit()
+                st.success("Categoria adicionada!")
+                st.rerun()
+            except sqlite3.IntegrityError:
+                st.error("Essa categoria já existe.")
+        else:
+            st.error("Digite um nome válido.")
+
+    # ---- SUBCATEGORIAS ----
+   with tab3:
+    st.subheader("Gerenciar Subcategorias")
+    cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
+    categorias_opts = cursor.fetchall()
+
+    if not categorias_opts:
+        st.info("Cadastre uma categoria primeiro.")
+    else:
+        cat_map = {c[1]: c[0] for c in categorias_opts}
+        cat_sel = st.selectbox("Categoria", list(cat_map.keys()))
+        nova_sub = st.text_input("Nome da nova subcategoria:")
+
+        if st.button("Adicionar subcategoria"):
+            if nova_sub.strip():
                 try:
-                    cursor.execute("INSERT INTO categorias (nome) VALUES (?)", (nova_cat.strip(),))
+                    cursor.execute(
+                        "INSERT INTO subcategorias (categoria_id, nome) VALUES (?, ?)",
+                        (cat_map[cat_sel], nova_sub.strip())
+                    )
                     conn.commit()
-                    st.success("Categoria adicionada!")
+                    st.success("Subcategoria adicionada!")
                     st.rerun()
                 except sqlite3.IntegrityError:
-                    st.error("Essa categoria já existe.")
+                    st.error("Essa subcategoria já existe nessa categoria.")
             else:
                 st.error("Digite um nome válido.")
 
-    # ---- SUBCATEGORIAS ----
-    with tab3:
-        st.subheader("Gerenciar Subcategorias")
-        cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
-        categorias_opts = cursor.fetchall()
+        # Listagem
+        cursor.execute("""
+            SELECT s.id, s.nome, c.nome
+            FROM subcategorias s
+            JOIN categorias c ON s.categoria_id = c.id
+            ORDER BY c.nome, s.nome
+        """)
+        df_sub = pd.DataFrame(cursor.fetchall(), columns=["ID", "Subcategoria", "Categoria"])
 
-        if not categorias_opts:
-            st.info("Cadastre uma categoria primeiro.")
-        else:
-            cat_map = {c[1]: c[0] for c in categorias_opts}
-            cat_sel = st.selectbox("Categoria", list(cat_map.keys()))
-            nova_sub = st.text_input("Nome da nova subcategoria:")
+        if not df_sub.empty:
+            st.dataframe(df_sub)
 
-            if st.button("Adicionar subcategoria"):
-                if nova_sub.strip():
-                    try:
-                        cursor.execute("INSERT INTO subcategorias (categoria_id, nome) VALUES (?, ?)", (cat_map[cat_sel], nova_sub.strip()))
-                        conn.commit()
-                        st.success("Subcategoria adicionada!")
-                        st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.error("Essa subcategoria já existe nessa categoria.")
-                else:
-                    st.error("Digite um nome válido.")
+            # Selecionar para editar/excluir
+            sub_sel = st.selectbox("Selecione uma subcategoria para editar/excluir", df_sub["Subcategoria"])
 
-            cursor.execute("""
-                SELECT s.id, s.nome, c.nome
-                FROM subcategorias s
-                JOIN categorias c ON s.categoria_id = c.id
-                ORDER BY c.nome, s.nome
-            """)
-            df_sub = pd.DataFrame(cursor.fetchall(), columns=["ID", "Subcategoria", "Categoria"])
-            if not df_sub.empty:
-                st.dataframe(df_sub)
+            # Editar
+            new_sub = st.text_input("Novo nome da subcategoria", value=sub_sel)
+            if st.button("Salvar alteração de subcategoria"):
+                try:
+                    cursor.execute("UPDATE subcategorias SET nome=? WHERE nome=?", (new_sub.strip(), sub_sel))
+                    conn.commit()
+                    st.success("Subcategoria atualizada!")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("Já existe essa subcategoria nessa categoria.")
+
+            # Excluir
+            if st.button("Excluir subcategoria selecionada"):
+                cursor.execute("DELETE FROM subcategorias WHERE nome=?", (sub_sel,))
+                conn.commit()
+                st.warning("Subcategoria excluída.")
+                st.rerun()
