@@ -204,12 +204,14 @@ elif menu == "Lançamentos":
     conta_filtro = col1.selectbox("Conta", contas)
 
     # categorias/subcategorias
-    cats = ["Todas"] + sorted({k.split(" → ")[0] for k in cat_sub_map if k != "Nenhuma"})
+    cats = ["Todas", "Nenhuma"] + sorted({k.split(" → ")[0] for k in cat_sub_map if k != "Nenhuma"})
     cat_filtro = col2.selectbox("Categoria", cats)
 
-    subs = ["Todas"]
-    if cat_filtro != "Todas":
+    subs = ["Todas", "Nenhuma"]
+    if cat_filtro not in ["Todas", "Nenhuma"]:
         subs += sorted({k for k in cat_sub_map if k.startswith(cat_filtro + " →")})
+    elif cat_filtro == "Nenhuma":
+        subs = ["Todas", "Nenhuma"]  # só "Nenhuma" faz sentido
     else:
         subs += sorted([k for k in cat_sub_map if k != "Nenhuma"])
     sub_filtro = col3.selectbox("Subcategoria", subs)
@@ -224,10 +226,17 @@ elif menu == "Lançamentos":
     # aplicar filtros
     if conta_filtro != "Todas":
         df_lanc = df_lanc[df_lanc["Conta"] == conta_filtro]
-    if cat_filtro != "Todas":
+
+    if cat_filtro == "Nenhuma":
+        df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"] == "Nenhuma"]
+    elif cat_filtro != "Todas":
         df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"].str.startswith(cat_filtro)]
-    if sub_filtro != "Todas":
+
+    if sub_filtro == "Nenhuma":
+        df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"] == "Nenhuma"]
+    elif sub_filtro != "Todas":
         df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"] == sub_filtro]
+
     if ano_filtro != "Todos":
         df_lanc = df_lanc[df_lanc["Ano"] == ano_filtro]
     if mes_filtro != "Todos":
@@ -249,7 +258,7 @@ elif menu == "Lançamentos":
 
     df_editado = pd.DataFrame(grid["data"])
 
-    # total de linhas exibidas
+    # mostrar total de linhas abaixo do grid
     st.markdown(f"**Total de lançamentos exibidos: {len(df_grid)}**")
 
     if st.button("Salvar alterações"):
@@ -261,6 +270,7 @@ elif menu == "Lançamentos":
         conn.commit()
         st.success(f"{updated} lançamentos atualizados com sucesso!")
         st.rerun()
+
 # =====================
 # IMPORTAÇÃO
 # =====================
