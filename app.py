@@ -147,17 +147,65 @@ if menu == "Dashboard":
 # =====================
 # LANÇAMENTOS
 # =====================
-elif menu=="Lançamentos":
+elif menu == "Lançamentos":
     st.header("Lançamentos")
-    mes_ref, ano_ref = seletor_mes_ano("Lançamentos", date.today())
-    contas = ["Todas"]+[row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
-    conta_sel = st.selectbox("Conta", contas)
-    df_lanc = read_table_transactions(conn)
-    df_lanc["date"]=pd.to_datetime(df_lanc["date"],errors="coerce")
-    df_filtrado=df_lanc[(df_lanc["date"].dt.month==mes_ref)&(df_lanc["date"].dt.year==ano_ref)]
-    if conta_sel!="Todas":
-        df_filtrado=df_filtrado[df_filtrado["account"]==conta_sel]
-    st.dataframe(df_filtrado,use_container_width=True)
+
+    # carregar categorias + subcategorias combinadas
+    cursor.execute("""
+        SELECT s.id, s.nome, c.nome
+        FROM subcategorias s
+        JOIN categorias c ON s.categoria_id = c.id
+        ORDER BY c.nome, s.nome
+    """)
+    cat_sub_map = {"Nenhuma": None}
+    for sid, s_nome, c_nome in cursor.fetchall():
+        cat_sub_map[f"{c_nome} → {s_nome}"] = sid
+
+    # carregar lançamentos já com coluna combinada
+    df_lanc = pd.read_sql_query(
+        """
+        SELECT t.id, t.date, t.description, t.value, t.account, t.subcategoria_id,
+               COALESCE(c.nome || ' → ' || s.nome, 'Nenhuma') AS cat_sub
+        FROM transactions t
+        LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
+        LEFT JOIN categorias c ON s.categoria_id = c.id
+        ORDER BY t.date DESC
+        """,
+        conn
+    )
+
+    df_lanc.rename(columns={
+        "date": "Data",
+        "description": "Descrição",
+        "value": "Valor",
+        "account": "Conta",
+        "cat_sub": "Categoria/Subcategoria"
+    }, inplace=True)
+
+    # formatar Data como string legível
+    df_lanc["Data"] = pd.to_datetime(df_lanc["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
+
+    # grid para edição de categoria/subcategoria
+    gb = GridOptionsBuilder.from_dataframe(df_lanc)
+    gb.configure_default_column(editable=False)
+    gb.configure_column("Categoria/Subcategoria", editable=True,
+                        cellEditor="agSelectCellEditor",
+                        cellEditorParams={"values": list(cat_sub_map.keys())})
+    grid = AgGrid(df_lanc, gridOptions=gb.build(),
+                  update_mode=GridUpdateMode.VALUE_CHANGED,
+                  fit_columns_on_grid_load=True, height=420, theme="balham")
+
+    df_editado = pd.DataFrame(grid["data"])
+
+    if st.button("Salvar alterações"):
+        updated = 0
+        for _, row in df_editado.iterrows():
+            sub_id = cat_sub_map.get(row.get("Categoria/Subcategoria", "Nenhuma"), None)
+            cursor.execute("UPDATE transactions SET subcategoria_id=? WHERE id=?", (sub_id, row["id"]))
+            updated += 1
+        conn.commit()
+        st.success(f"{updated} lançamentos atualizados com sucesso!")
+        st.rerun()
 
 # =====================
 # IMPORTAÇÃO
