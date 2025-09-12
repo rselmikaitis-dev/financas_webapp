@@ -158,12 +158,39 @@ elif menu=="Lançamentos":
     if conta_sel!="Todas":
         df_filtrado=df_filtrado[df_filtrado["account"]==conta_sel]
     st.dataframe(df_filtrado,use_container_width=True)
-
 # =====================
 # IMPORTAÇÃO
 # =====================
 elif menu == "Importação":
     st.header("Importação de Lançamentos")
+
+    # Função auxiliar para tratar datas vindas do grid
+    def _coerce_to_pydate(x):
+        """Converte valores vindos do AgGrid (dict/str/Timestamp) para date ou None."""
+        if x is None or (isinstance(x, float) and pd.isna(x)):
+            return None
+        if isinstance(x, pd.Timestamp):
+            return x.date()
+        if isinstance(x, datetime):
+            return x.date()
+        if isinstance(x, date):
+            return x
+        if isinstance(x, dict):
+            y = x.get("year") or x.get("Year")
+            m = x.get("month") or x.get("Month")
+            d = x.get("day") or x.get("Day")
+            if y and m and d:
+                try:
+                    return date(int(y), int(m), int(d))
+                except Exception:
+                    pass
+            v = x.get("value") or x.get("Value")
+            if v:
+                dtry = parse_date(v)
+                return dtry if isinstance(dtry, date) else None
+            return None
+        dtry = parse_date(str(x))
+        return dtry if isinstance(dtry, date) else None
 
     arquivo = st.file_uploader("Selecione o arquivo (CSV, XLSX ou XLS)", type=["csv", "xlsx", "xls"])
 
@@ -176,36 +203,6 @@ elif menu == "Importação":
         if name.endswith(".xls"):
             return pd.read_excel(file, engine="xlrd", dtype=str)
         raise RuntimeError("Formato não suportado.")
-    def _coerce_to_pydate(x):
-    """Converte valores vindos do AgGrid (dict/str/Timestamp) para date ou None."""
-    if x is None or (isinstance(x, float) and pd.isna(x)):
-        return None
-    # Já é Timestamp/datetime/date
-    if isinstance(x, pd.Timestamp):
-        return x.date()
-    if isinstance(x, datetime):
-        return x.date()
-    if isinstance(x, date):
-        return x
-    # Veio como dict (ex.: {'year': 2025, 'month': 8, 'day': 6})
-    if isinstance(x, dict):
-        y = x.get("year") or x.get("Year")
-        m = x.get("month") or x.get("Month")
-        d = x.get("day") or x.get("Day")
-        if y and m and d:
-            try:
-                return date(int(y), int(m), int(d))
-            except Exception:
-                pass
-        # Tentativa com campo 'value' (string)
-        v = x.get("value") or x.get("Value")
-        if v:
-            dtry = parse_date(v)
-            return dtry if isinstance(dtry, date) else None
-        return None
-    # Caso geral: string
-    dtry = parse_date(str(x))
-    return dtry if isinstance(dtry, date) else None
 
     if arquivo is not None:
         try:
@@ -285,7 +282,7 @@ elif menu == "Importação":
             if "Subcategoria" not in df.columns:
                 df["Subcategoria"] = "Nenhuma"
 
-            # ordenar colunas: Data > Descrição > Valor > Categoria > Subcategoria > resto
+            # ordenar colunas
             ordem = ["Data", "Descrição", "Valor", "Categoria", "Subcategoria"]
             cols_existentes = [c for c in ordem if c in df.columns]
             cols_restantes = [c for c in df.columns if c not in ordem]
@@ -307,49 +304,52 @@ elif menu == "Importação":
             df_editado = pd.DataFrame(grid["data"])
 
             if st.button("Importar lançamentos"):
-    inserted = 0
-    for _, row in df_editado.iterrows():
-        desc = str(row["Descrição"])
-        val = row["Valor"]
-        dt_raw = row["Data"]
+                inserted = 0
+                for _, row in df_editado.iterrows():
+                    desc = str(row["Descrição"])
+                    val = row["Valor"]
+                    dt_raw = row["Data"]
 
-        # validações básicas
-        if val is None:
-            continue
-        # garante número mesmo se o grid devolveu string
-        try:
-            valf = float(val)
-        except Exception:
-            valf = parse_money(val)
-            if valf is None:
-                continue
+                    if val is None:
+                        continue
 
-        # data: se cartão usa vencimento de mês/ano; senão normaliza do grid
-        if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
-            dia = min(dia_venc_cc, ultimo_dia_do_mes(ano_ref_cc, mes_ref_cc))
-            dt_obj = date(ano_ref_cc, mes_ref_cc, dia)
-            # cartão: inverter sinal (positivos viram débitos)
-            valf = -valf
-        else:
-            dt_obj = _coerce_to_pydate(dt_raw)
+                    try:
+                        valf = float(val)
+                    except Exception:
+                        valf = parse_money(val)
+                        if valf is None:
+                            continue
 
-        if not isinstance(dt_obj, date):
-            continue  # pula linhas sem data válida
+                    # se for cartão de crédito
+                    if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
+                        dia = min(dia_venc_cc, ultimo_dia_do_mes(ano_ref_cc, mes_ref_cc))
+                        dt_obj = date(ano_ref_cc, mes_ref_cc, dia)
+                        valf = -valf  # inverter sinal
+                    else:
+                        dt_obj = _coerce_to_pydate(dt_raw)
 
-        cursor.execute("""
-            INSERT INTO transactions (date, description, value, account, subcategoria_id)
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            dt_obj.strftime("%Y-%m-%d"),
-            desc,
-            valf,
-            conta_sel,
-            subcat_map.get(row.get("Subcategoria", "Nenhuma"), None)
-        ))
-        inserted += 1
-    conn.commit()
-    st.success(f"{inserted} lançamentos importados com sucesso!")
-    st.rerun()
+                    if not isinstance(dt_obj, date):
+                        continue
+
+                    sub_id = subcat_map.get(row.get("Subcategoria", "Nenhuma"), None)
+
+                    cursor.execute("""
+                        INSERT INTO transactions (date, description, value, account, subcategoria_id)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        dt_obj.strftime("%Y-%m-%d"),
+                        desc,
+                        valf,
+                        conta_sel,
+                        sub_id
+                    ))
+                    inserted += 1
+                conn.commit()
+                st.success(f"{inserted} lançamentos importados com sucesso!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao importar: {e}")
+
 # =====================
 # CONFIGURAÇÕES
 # =====================
