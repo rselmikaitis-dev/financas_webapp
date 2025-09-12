@@ -219,10 +219,11 @@ elif menu == "Configurações":
     )
 
     # ---- DADOS ----
+       # ---- DADOS ----
     with tab1:
         st.subheader("Gerenciar Dados")
 
-        # Exportar
+        # Exportar backup
         st.markdown("### 📥 Baixar Backup")
         if st.button("Baixar todos os dados"):
             import io, zipfile
@@ -237,6 +238,34 @@ elif menu == "Configurações":
 
         st.markdown("---")
 
+        # Importar backup
+        st.markdown("### 📤 Restaurar Backup")
+        uploaded_backup = st.file_uploader("Selecione o arquivo backup_financas.zip", type=["zip"])
+        if uploaded_backup is not None and st.button("Restaurar backup do arquivo"):
+            import io, zipfile
+            try:
+                with zipfile.ZipFile(uploaded_backup, "r") as zf:
+                    # Reset antes de restaurar
+                    cursor.execute("DELETE FROM transactions")
+                    cursor.execute("DELETE FROM subcategorias")
+                    cursor.execute("DELETE FROM categorias")
+                    cursor.execute("DELETE FROM contas")
+
+                    # Restaurar na ordem correta
+                    for tabela in ["contas", "categorias", "subcategorias", "transactions"]:
+                        if f"{tabela}.csv" not in zf.namelist():
+                            st.error(f"{tabela}.csv não encontrado no backup")
+                            st.stop()
+                        df = pd.read_csv(zf.open(f"{tabela}.csv"))
+                        df.to_sql(tabela, conn, if_exists="append", index=False)
+                    conn.commit()
+                st.success("Backup restaurado com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao restaurar backup: {e}")
+
+        st.markdown("---")
+
         # Reset
         st.markdown("### ⚠️ Resetar Banco de Dados")
         confirm = st.checkbox("Confirmo que desejo apagar TODOS os dados")
@@ -247,7 +276,6 @@ elif menu == "Configurações":
             cursor.execute("DELETE FROM contas")
             conn.commit()
             st.success("Todos os dados foram apagados!")
-
     # ---- CONTAS ----
     with tab2:
         st.subheader("Gerenciar Contas")
