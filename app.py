@@ -215,12 +215,30 @@ elif menu=="Importação":
 elif menu == "Configurações":
     st.header("Configurações")
     tab1, tab2, tab3, tab4 = st.tabs(
-        ["⚠️ Reset", "Contas", "Categorias", "Subcategorias"]
+        ["Dados", "Contas", "Categorias", "Subcategorias"]
     )
 
-    # ---- RESET ----
+    # ---- DADOS ----
     with tab1:
-        st.subheader("Reset do banco de dados")
+        st.subheader("Gerenciar Dados")
+
+        # Exportar
+        st.markdown("### 📥 Baixar Backup")
+        if st.button("Baixar todos os dados"):
+            import io, zipfile
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as zf:
+                for nome_tabela in ["contas", "categorias", "subcategorias", "transactions"]:
+                    df = pd.read_sql_query(f"SELECT * FROM {nome_tabela}", conn)
+                    csv_bytes = df.to_csv(index=False).encode("utf-8")
+                    zf.writestr(f"{nome_tabela}.csv", csv_bytes)
+            buffer.seek(0)
+            st.download_button("⬇️ Clique aqui para baixar backup.zip", buffer, file_name="backup_financas.zip")
+
+        st.markdown("---")
+
+        # Reset
+        st.markdown("### ⚠️ Resetar Banco de Dados")
         confirm = st.checkbox("Confirmo que desejo apagar TODOS os dados")
         if st.button("Apagar tudo e começar do zero", type="primary", disabled=not confirm):
             cursor.execute("DELETE FROM transactions")
@@ -284,7 +302,6 @@ elif menu == "Configurações":
                 st.success("Categoria atualizada!")
                 st.rerun()
             if st.button("Excluir categoria"):
-                # desvincular subcategorias e transações
                 cursor.execute("SELECT id FROM subcategorias WHERE categoria_id=(SELECT id FROM categorias WHERE nome=?)", (cat_sel,))
                 sub_ids = [r[0] for r in cursor.fetchall()]
                 if sub_ids:
@@ -325,8 +342,7 @@ elif menu == "Configurações":
                 sub_sel = st.selectbox("Subcategoria existente", df_sub["Nome"])
                 new_sub = st.text_input("Novo nome subcategoria", value=sub_sel)
                 if st.button("Salvar alteração subcategoria"):
-                    cursor.execute("UPDATE subcategorias SET nome=? WHERE id=(SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?)",
-                                   (new_sub.strip(), sub_sel, cat_map[cat_sel]))
+                    cursor.execute("UPDATE subcategorias SET nome=? WHERE id=(SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?)", (new_sub.strip(), sub_sel, cat_map[cat_sel]))
                     conn.commit()
                     st.success("Subcategoria atualizada!")
                     st.rerun()
