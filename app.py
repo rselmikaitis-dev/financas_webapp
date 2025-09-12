@@ -66,7 +66,6 @@ try:
     cursor.execute("ALTER TABLE categorias ADD COLUMN tipo TEXT DEFAULT 'Despesa Variável'")
     conn.commit()
 except sqlite3.OperationalError:
-    # Já existe a coluna, ignorar
     pass
 
 # =====================
@@ -157,7 +156,6 @@ if menu == "Dashboard":
 elif menu == "Lançamentos":
     st.header("Lançamentos")
 
-    # carregar categorias + subcategorias combinadas
     cursor.execute("""
         SELECT s.id, s.nome, c.nome
         FROM subcategorias s
@@ -168,7 +166,6 @@ elif menu == "Lançamentos":
     for sid, s_nome, c_nome in cursor.fetchall():
         cat_sub_map[f"{c_nome} → {s_nome}"] = sid
 
-    # carregar lançamentos já com coluna combinada
     df_lanc = pd.read_sql_query(
         """
         SELECT t.id, t.date, t.description, t.value, t.account, t.subcategoria_id,
@@ -189,28 +186,16 @@ elif menu == "Lançamentos":
         "cat_sub": "Categoria/Subcategoria"
     }, inplace=True)
 
-    # formatar Data como string legível
     df_lanc["Data"] = pd.to_datetime(df_lanc["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-
-    # criar colunas auxiliares para filtros
     df_lanc["Ano"] = pd.to_datetime(df_lanc["Data"], errors="coerce", dayfirst=True).dt.year
     df_lanc["Mês"] = pd.to_datetime(df_lanc["Data"], errors="coerce", dayfirst=True).dt.month
 
-    # nomes dos meses
-    meses_nomes = {
-        1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
-        5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
-        9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
-    }
+    meses_nomes = {1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"}
 
-    # filtros
     col1, col2, col3, col4, col5 = st.columns(5)
-
-    # conta
     contas = ["Todas"] + sorted(df_lanc["Conta"].dropna().unique().tolist())
     conta_filtro = col1.selectbox("Conta", contas)
 
-    # categorias/subcategorias
     cats = ["Todas", "Nenhuma"] + sorted({k.split(" → ")[0] for k in cat_sub_map if k != "Nenhuma"})
     cat_filtro = col2.selectbox("Categoria", cats)
 
@@ -218,42 +203,35 @@ elif menu == "Lançamentos":
     if cat_filtro not in ["Todas", "Nenhuma"]:
         subs += sorted({k for k in cat_sub_map if k.startswith(cat_filtro + " →")})
     elif cat_filtro == "Nenhuma":
-        subs = ["Todas", "Nenhuma"]  # só "Nenhuma" faz sentido
+        subs = ["Todas", "Nenhuma"]
     else:
         subs += sorted([k for k in cat_sub_map if k != "Nenhuma"])
     sub_filtro = col3.selectbox("Subcategoria", subs)
 
-    # ano e mês
     anos = ["Todos"] + sorted(df_lanc["Ano"].dropna().unique().astype(int).tolist())
     ano_filtro = col4.selectbox("Ano", anos)
 
     meses = ["Todos"] + [meses_nomes[m] for m in range(1, 13)]
     mes_filtro = col5.selectbox("Mês", meses)
 
-    # aplicar filtros
     if conta_filtro != "Todas":
         df_lanc = df_lanc[df_lanc["Conta"] == conta_filtro]
-
     if cat_filtro == "Nenhuma":
         df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"] == "Nenhuma"]
     elif cat_filtro != "Todas":
         df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"].str.startswith(cat_filtro)]
-
     if sub_filtro == "Nenhuma":
         df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"] == "Nenhuma"]
     elif sub_filtro != "Todas":
         df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"] == sub_filtro]
-
     if ano_filtro != "Todos":
         df_lanc = df_lanc[df_lanc["Ano"] == ano_filtro]
     if mes_filtro != "Todos":
         mes_num = [k for k, v in meses_nomes.items() if v == mes_filtro][0]
         df_lanc = df_lanc[df_lanc["Mês"] == mes_num]
 
-    # remover colunas técnicas antes do grid
     df_grid = df_lanc.drop(columns=["id", "subcategoria_id", "Ano", "Mês"], errors="ignore")
 
-    # grid para edição de categoria/subcategoria
     gb = GridOptionsBuilder.from_dataframe(df_grid)
     gb.configure_default_column(editable=False)
     gb.configure_column("Categoria/Subcategoria", editable=True,
@@ -262,10 +240,8 @@ elif menu == "Lançamentos":
     grid = AgGrid(df_grid, gridOptions=gb.build(),
                   update_mode=GridUpdateMode.VALUE_CHANGED,
                   fit_columns_on_grid_load=True, height=420, theme="balham")
-
     df_editado = pd.DataFrame(grid["data"])
 
-    # mostrar total de linhas abaixo do grid
     st.markdown(f"**Total de lançamentos exibidos: {len(df_grid)}**")
 
     if st.button("Salvar alterações"):
@@ -283,22 +259,16 @@ elif menu == "Lançamentos":
 # =====================
 elif menu == "Importação":
     st.header("Importação de Lançamentos")
-
-    # Botão de reset do estado
     if st.button("Limpar estado da importação"):
         if "msg_sucesso_import" in st.session_state:
             del st.session_state["msg_sucesso_import"]
         st.experimental_rerun()
-
-    # Mensagem de sucesso persistente
     if "msg_sucesso_import" in st.session_state:
         st.success(st.session_state["msg_sucesso_import"])
         if st.button("OK"):
             del st.session_state["msg_sucesso_import"]
         st.stop()
-
     arquivo = st.file_uploader("Selecione o arquivo (CSV, XLSX ou XLS)", type=["csv", "xlsx", "xls"])
-
     def _read_uploaded(file):
         name = file.name.lower()
         if name.endswith(".csv"):
@@ -308,54 +278,41 @@ elif menu == "Importação":
         if name.endswith(".xls"):
             return pd.read_excel(file, engine="xlrd", dtype=str)
         raise RuntimeError("Formato não suportado.")
-
     if arquivo is not None:
         try:
             df = _read_uploaded(arquivo)
             df.columns = [c.strip().lower().replace("\ufeff", "") for c in df.columns]
-
             mapa_colunas = {
-                "data": ["data", "data lançamento", "data lancamento", "dt", "lançamento", "data mov", "data movimento"],
-                "descrição": ["descrição", "descricao", "descricão", "histórico", "historico", "detalhe", "hist", "descricao/historico", "lançamento", "lancamento"],
-                "valor": ["valor", "valor (r$)", "valor r$", "vlr", "amount", "valorlancamento", "valor lancamento"]
+                "data": ["data","data lançamento","data lancamento","dt","lançamento","data mov","data movimento"],
+                "descrição": ["descrição","descricao","historico","histórico","detalhe","descricao/historico","lançamento"],
+                "valor": ["valor","valor (r$)","valor r$","vlr","amount","valorlancamento","valor lancamento"]
             }
-
             col_map = {}
             for alvo, poss in mapa_colunas.items():
                 for p in poss:
                     if p in df.columns:
                         col_map[alvo] = p
                         break
-
             if "data" not in col_map or "valor" not in col_map:
                 st.error(f"Arquivo inválido. Colunas lidas: {list(df.columns)}")
                 st.stop()
-
             if "descrição" not in col_map:
                 df["descrição"] = ""
                 col_map["descrição"] = "descrição"
-
             df = df.rename(columns={
                 col_map["data"]: "Data",
                 col_map["descrição"]: "Descrição",
                 col_map["valor"]: "Valor"
             })
-
             df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
-
-            # conversões
             df["Data"] = df["Data"].apply(parse_date)
-            df["Data"] = df["Data"].apply(lambda x: x.strftime("%d/%m/%Y") if isinstance(x, (datetime, date)) else str(x))
+            df["Data"] = df["Data"].apply(lambda x: x.strftime("%d/%m/%Y") if isinstance(x,(datetime,date)) else str(x))
             df["Valor"] = df["Valor"].apply(parse_money)
-
-            # selecionar conta
             contas = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
             if not contas:
                 st.error("Nenhuma conta cadastrada. Vá em Configurações → Contas.")
                 st.stop()
             conta_sel = st.selectbox("Selecione a conta destino", contas)
-
-            # se for cartão de crédito → perguntar mês/ano da fatura
             mes_ref_cc, ano_ref_cc, dia_venc_cc = None, None, None
             if conta_sel.lower().startswith("cartão de crédito"):
                 cursor.execute("SELECT dia_vencimento FROM contas WHERE nome=?", (conta_sel,))
@@ -363,8 +320,6 @@ elif menu == "Importação":
                 dia_venc_cc = row[0] if row and row[0] else 1
                 st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: {dia_venc_cc}.")
                 mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
-
-            # carregar categorias/subcategorias combinadas
             cursor.execute("""
                 SELECT s.id, s.nome, c.nome
                 FROM subcategorias s
@@ -374,18 +329,12 @@ elif menu == "Importação":
             cat_sub_map = {"Nenhuma": None}
             for sid, s_nome, c_nome in cursor.fetchall():
                 cat_sub_map[f"{c_nome} → {s_nome}"] = sid
-
-            # garantir coluna combinada
             if "Categoria/Subcategoria" not in df.columns:
                 df["Categoria/Subcategoria"] = "Nenhuma"
-
-            # ordenar colunas
-            ordem = ["Data", "Descrição", "Valor", "Categoria/Subcategoria"]
+            ordem = ["Data","Descrição","Valor","Categoria/Subcategoria"]
             cols_existentes = [c for c in ordem if c in df.columns]
             cols_restantes = [c for c in df.columns if c not in ordem]
             df = df[cols_existentes + cols_restantes]
-
-            # grid de pré-visualização
             gb = GridOptionsBuilder.from_dataframe(df)
             gb.configure_default_column(editable=False)
             gb.configure_column("Categoria/Subcategoria", editable=True,
@@ -394,16 +343,13 @@ elif menu == "Importação":
             grid = AgGrid(df, gridOptions=gb.build(),
                           update_mode=GridUpdateMode.VALUE_CHANGED,
                           fit_columns_on_grid_load=True, height=420, theme="balham")
-
             df_editado = pd.DataFrame(grid["data"])
-
             if st.button("Importar lançamentos"):
                 inserted = 0
                 for _, row in df_editado.iterrows():
                     desc = str(row["Descrição"])
                     val = row["Valor"]
                     dt_raw = row["Data"]
-
                     if val is None:
                         continue
                     try:
@@ -412,239 +358,25 @@ elif menu == "Importação":
                         valf = parse_money(val)
                         if valf is None:
                             continue
-
                     if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
                         dia = min(dia_venc_cc, ultimo_dia_do_mes(ano_ref_cc, mes_ref_cc))
                         dt_obj = date(ano_ref_cc, mes_ref_cc, dia)
                         valf = -valf
                     else:
                         dt_obj = parse_date(dt_raw)
-
-                    if not isinstance(dt_obj, date):
+                    if not isinstance(dt_obj,date):
                         continue
-
-                    cat_sub_sel = row.get("Categoria/Subcategoria", "Nenhuma")
-                    sub_id = cat_sub_map.get(cat_sub_sel, None)
-
+                    cat_sub_sel = row.get("Categoria/Subcategoria","Nenhuma")
+                    sub_id = cat_sub_map.get(cat_sub_sel,None)
                     cursor.execute("""
                         INSERT INTO transactions (date, description, value, account, subcategoria_id)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (
-                        dt_obj.strftime("%Y-%m-%d"),
-                        desc,
-                        valf,
-                        conta_sel,
-                        sub_id
-                    ))
+                        VALUES (?,?,?,?,?)
+                    """,(dt_obj.strftime("%Y-%m-%d"),desc,valf,conta_sel,sub_id))
                     inserted += 1
-
                 conn.commit()
                 st.session_state["msg_sucesso_import"] = f"{inserted} lançamentos importados com sucesso!"
                 st.rerun()
         except Exception as e:
             st.exception(e)
 
-# =====================
-# CONFIGURAÇÕES
-# =====================
-elif menu == "Configurações":
-    st.header("Configurações")
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["Dados", "Contas", "Categorias", "Subcategorias"]
-    )
-
-    # ---- DADOS ----
-       # ---- DADOS ----
-    with tab1:
-        st.subheader("Gerenciar Dados")
-
-        # Exportar backup
-        st.markdown("### 📥 Baixar Backup")
-        if st.button("Baixar todos os dados"):
-            import io, zipfile
-            buffer = io.BytesIO()
-            with zipfile.ZipFile(buffer, "w") as zf:
-                for nome_tabela in ["contas", "categorias", "subcategorias", "transactions"]:
-                    df = pd.read_sql_query(f"SELECT * FROM {nome_tabela}", conn)
-                    csv_bytes = df.to_csv(index=False).encode("utf-8")
-                    zf.writestr(f"{nome_tabela}.csv", csv_bytes)
-            buffer.seek(0)
-            st.download_button("⬇️ Clique aqui para baixar backup.zip", buffer, file_name="backup_financas.zip")
-
-        st.markdown("---")
-
-        # Importar backup
-        st.markdown("### 📤 Restaurar Backup")
-        uploaded_backup = st.file_uploader("Selecione o arquivo backup_financas.zip", type=["zip"])
-        if uploaded_backup is not None and st.button("Restaurar backup do arquivo"):
-            import io, zipfile
-            try:
-                with zipfile.ZipFile(uploaded_backup, "r") as zf:
-                    # Reset antes de restaurar
-                    cursor.execute("DELETE FROM transactions")
-                    cursor.execute("DELETE FROM subcategorias")
-                    cursor.execute("DELETE FROM categorias")
-                    cursor.execute("DELETE FROM contas")
-
-                    # Restaurar na ordem correta
-                    for tabela in ["contas", "categorias", "subcategorias", "transactions"]:
-                        if f"{tabela}.csv" not in zf.namelist():
-                            st.error(f"{tabela}.csv não encontrado no backup")
-                            st.stop()
-                        df = pd.read_csv(zf.open(f"{tabela}.csv"))
-                        df.to_sql(tabela, conn, if_exists="append", index=False)
-                    conn.commit()
-                st.success("Backup restaurado com sucesso!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao restaurar backup: {e}")
-
-        st.markdown("---")
-
-        # Reset
-        st.markdown("### ⚠️ Resetar Banco de Dados")
-        confirm = st.checkbox("Confirmo que desejo apagar TODOS os dados")
-        if st.button("Apagar tudo e começar do zero", type="primary", disabled=not confirm):
-            cursor.execute("DELETE FROM transactions")
-            cursor.execute("DELETE FROM subcategorias")
-            cursor.execute("DELETE FROM categorias")
-            cursor.execute("DELETE FROM contas")
-            conn.commit()
-            st.success("Todos os dados foram apagados!")
-    # ---- CONTAS ----
-    with tab2:
-        st.subheader("Gerenciar Contas")
-        cursor.execute("SELECT id, nome, dia_vencimento FROM contas ORDER BY nome")
-        df_contas = pd.DataFrame(cursor.fetchall(), columns=["ID", "Conta", "Dia Vencimento"])
-        if not df_contas.empty:
-            st.dataframe(df_contas, use_container_width=True)
-            conta_sel = st.selectbox("Conta existente", df_contas["Conta"])
-            new_name = st.text_input("Novo nome", value=conta_sel)
-            new_venc = st.number_input("Dia vencimento (se cartão)", 1, 31, int(df_contas.loc[df_contas["Conta"] == conta_sel, "Dia Vencimento"].iloc[0] or 1))
-            if st.button("Salvar alterações de conta"):
-                cursor.execute("UPDATE contas SET nome=?, dia_vencimento=? WHERE nome=?", (new_name.strip(), new_venc, conta_sel))
-                cursor.execute("UPDATE transactions SET account=? WHERE account=?", (new_name.strip(), conta_sel))
-                conn.commit()
-                st.success("Conta atualizada!")
-                st.rerun()
-            if st.button("Excluir conta"):
-                cursor.execute("DELETE FROM contas WHERE nome=?", (conta_sel,))
-                conn.commit()
-                st.warning("Conta excluída. Lançamentos ficam com o nome antigo.")
-                st.rerun()
-        else:
-            st.info("Nenhuma conta cadastrada.")
-
-        st.markdown("---")
-        nova = st.text_input("Nova conta")
-        dia_venc = None
-        if nova.lower().startswith("cartão de crédito"):
-            dia_venc = st.number_input("Dia vencimento cartão", 1, 31, 1)
-        if st.button("Adicionar conta"):
-            if nova.strip():
-                try:
-                    cursor.execute("INSERT INTO contas (nome, dia_vencimento) VALUES (?, ?)", (nova.strip(), dia_venc))
-                    conn.commit()
-                    st.success("Conta adicionada!")
-                    st.rerun()
-                except sqlite3.IntegrityError:
-                    st.error("Conta já existe")
-
-  # ---- CATEGORIAS ----
-with tab3:
-    st.subheader("Gerenciar Categorias")
-
-    tipos_possiveis = ["Despesa Fixa", "Despesa Variável", "Investimento", "Receita"]
-
-    # Listar categorias
-    cursor.execute("SELECT id, nome, tipo FROM categorias ORDER BY nome")
-    df_cat = pd.DataFrame(cursor.fetchall(), columns=["ID", "Nome", "Tipo"])
-    if not df_cat.empty:
-        st.dataframe(df_cat, use_container_width=True)
-
-        cat_sel = st.selectbox("Categoria existente", df_cat["Nome"])
-        row_sel = df_cat[df_cat["Nome"] == cat_sel].iloc[0]
-
-        new_name = st.text_input("Novo nome categoria", value=row_sel["Nome"])
-        new_tipo = st.selectbox(
-            "Tipo",
-            tipos_possiveis,
-            index=tipos_possiveis.index(row_sel["Tipo"]) if row_sel["Tipo"] in tipos_possiveis else 1,
-        )
-
-        if st.button("Salvar alteração categoria"):
-            cursor.execute("UPDATE categorias SET nome=?, tipo=? WHERE id=?", (new_name.strip(), new_tipo, int(row_sel["ID"])))
-            conn.commit()
-            st.success("Categoria atualizada!")
-            st.rerun()
-
-        if st.button("Excluir categoria"):
-            cursor.execute("SELECT id FROM subcategorias WHERE categoria_id=?", (int(row_sel["ID"]),))
-            sub_ids = [r[0] for r in cursor.fetchall()]
-            if sub_ids:
-                cursor.executemany("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", [(sid,) for sid in sub_ids])
-                cursor.executemany("DELETE FROM subcategorias WHERE id=?", [(sid,) for sid in sub_ids])
-            cursor.execute("DELETE FROM categorias WHERE id=?", (int(row_sel["ID"]),))
-            conn.commit()
-            st.warning("Categoria e subcategorias excluídas!")
-            st.rerun()
-    else:
-        st.info("Nenhuma categoria cadastrada.")
-
-    st.markdown("---")
-    nova_cat = st.text_input("Nova categoria")
-    novo_tipo = st.selectbox("Tipo da nova categoria", tipos_possiveis, key="novo_tipo_cat")
-    if st.button("Adicionar categoria"):
-        if nova_cat.strip():
-            try:
-                cursor.execute("INSERT INTO categorias (nome, tipo) VALUES (?, ?)", (nova_cat.strip(), novo_tipo))
-                conn.commit()
-                st.success("Categoria adicionada!")
-                st.rerun()
-            except sqlite3.IntegrityError:
-                st.error("Categoria já existe")
-
-    # ---- SUBCATEGORIAS ----
-    with tab4:
-        st.subheader("Gerenciar Subcategorias")
-        cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
-        categorias_opts = cursor.fetchall()
-        if not categorias_opts:
-            st.info("Cadastre uma categoria primeiro")
-        else:
-            cat_map = {c[1]: c[0] for c in categorias_opts}
-            cat_sel = st.selectbox("Categoria", list(cat_map.keys()))
-            cursor.execute("SELECT id, nome FROM subcategorias WHERE categoria_id=? ORDER BY nome", (cat_map[cat_sel],))
-            df_sub = pd.DataFrame(cursor.fetchall(), columns=["ID", "Nome"])
-            if not df_sub.empty:
-                st.dataframe(df_sub, use_container_width=True)
-                sub_sel = st.selectbox("Subcategoria existente", df_sub["Nome"])
-                new_sub = st.text_input("Novo nome subcategoria", value=sub_sel)
-                if st.button("Salvar alteração subcategoria"):
-                    cursor.execute("UPDATE subcategorias SET nome=? WHERE id=(SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?)", (new_sub.strip(), sub_sel, cat_map[cat_sel]))
-                    conn.commit()
-                    st.success("Subcategoria atualizada!")
-                    st.rerun()
-                if st.button("Excluir subcategoria"):
-                    cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", (sub_sel, cat_map[cat_sel]))
-                    row = cursor.fetchone()
-                    if row:
-                        sid = row[0]
-                        cursor.execute("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", (sid,))
-                        cursor.execute("DELETE FROM subcategorias WHERE id=?", (sid,))
-                        conn.commit()
-                        st.warning("Subcategoria excluída e desvinculada dos lançamentos.")
-                        st.rerun()
-            else:
-                st.info("Nenhuma subcategoria nesta categoria.")
-
-            nova_sub = st.text_input("Nova subcategoria")
-            if st.button("Adicionar subcategoria"):
-                if nova_sub.strip():
-                    try:
-                        cursor.execute("INSERT INTO subcategorias (categoria_id, nome) VALUES (?, ?)", (cat_map[cat_sel], nova_sub.strip()))
-                        conn.commit()
-                        st.success("Subcategoria adicionada!")
-                        st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.error("Já existe essa subcategoria")
+#
