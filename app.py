@@ -172,33 +172,6 @@ elif menu == "Importação":
             del st.session_state["msg_sucesso_import"]
         st.stop()
 
-    # Função auxiliar para tratar datas vindas do grid
-    def _coerce_to_pydate(x):
-        if x is None or (isinstance(x, float) and pd.isna(x)):
-            return None
-        if isinstance(x, pd.Timestamp):
-            return x.date()
-        if isinstance(x, datetime):
-            return x.date()
-        if isinstance(x, date):
-            return x
-        if isinstance(x, dict):
-            y = x.get("year") or x.get("Year")
-            m = x.get("month") or x.get("Month")
-            d = x.get("day") or x.get("Day")
-            if y and m and d:
-                try:
-                    return date(int(y), int(m), int(d))
-                except Exception:
-                    pass
-            v = x.get("value") or x.get("Value")
-            if v:
-                dtry = parse_date(v)
-                return dtry if isinstance(dtry, date) else None
-            return None
-        dtry = parse_date(str(x))
-        return dtry if isinstance(dtry, date) else None
-
     arquivo = st.file_uploader("Selecione o arquivo (CSV, XLSX ou XLS)", type=["csv", "xlsx", "xls"])
 
     def _read_uploaded(file):
@@ -244,15 +217,21 @@ elif menu == "Importação":
             })
 
             df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
+
+            # conversões
             df["Data"] = df["Data"].apply(parse_date)
+            # transformar em string dd/mm/YYYY para o grid
+            df["Data"] = df["Data"].apply(lambda x: x.strftime("%d/%m/%Y") if isinstance(x, (datetime, date)) else str(x))
             df["Valor"] = df["Valor"].apply(parse_money)
 
+            # selecionar conta
             contas = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
             if not contas:
                 st.error("Nenhuma conta cadastrada. Vá em Configurações → Contas.")
                 st.stop()
             conta_sel = st.selectbox("Selecione a conta destino", contas)
 
+            # se for cartão de crédito → perguntar mês/ano da fatura
             mes_ref_cc, ano_ref_cc, dia_venc_cc = None, None, None
             if conta_sel.lower().startswith("cartão de crédito"):
                 cursor.execute("SELECT dia_vencimento FROM contas WHERE nome=?", (conta_sel,))
@@ -261,6 +240,7 @@ elif menu == "Importação":
                 st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: {dia_venc_cc}.")
                 mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
 
+            # carregar categorias e subcategorias
             cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
             categorias = cursor.fetchall()
             cat_map = {c[1]: c[0] for c in categorias}
@@ -275,16 +255,19 @@ elif menu == "Importação":
             for sid, s_nome, c_nome in cursor.fetchall():
                 subcat_map[f"{c_nome} → {s_nome}"] = sid
 
+            # garantir colunas Categoria e Subcategoria
             if "Categoria" not in df.columns:
                 df["Categoria"] = "Nenhuma"
             if "Subcategoria" not in df.columns:
                 df["Subcategoria"] = "Nenhuma"
 
+            # ordenar colunas
             ordem = ["Data", "Descrição", "Valor", "Categoria", "Subcategoria"]
             cols_existentes = [c for c in ordem if c in df.columns]
             cols_restantes = [c for c in df.columns if c not in ordem]
             df = df[cols_existentes + cols_restantes]
 
+            # grid de pré-visualização
             gb = GridOptionsBuilder.from_dataframe(df)
             gb.configure_default_column(editable=False)
             gb.configure_column("Categoria", editable=True,
@@ -298,8 +281,6 @@ elif menu == "Importação":
                           fit_columns_on_grid_load=True, height=420, theme="balham")
 
             df_editado = pd.DataFrame(grid["data"])
-            st.subheader("Prévia após edição no grid")
-            st.dataframe(df_editado.head(20))
 
             if st.button("Importar lançamentos"):
                 inserted = 0
@@ -317,12 +298,13 @@ elif menu == "Importação":
                         if valf is None:
                             continue
 
+                    # data
                     if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
                         dia = min(dia_venc_cc, ultimo_dia_do_mes(ano_ref_cc, mes_ref_cc))
                         dt_obj = date(ano_ref_cc, mes_ref_cc, dia)
                         valf = -valf
                     else:
-                        dt_obj = _coerce_to_pydate(dt_raw)
+                        dt_obj = parse_date(dt_raw)
 
                     if not isinstance(dt_obj, date):
                         continue
