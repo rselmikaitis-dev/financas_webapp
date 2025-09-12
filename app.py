@@ -162,52 +162,136 @@ elif menu=="Lançamentos":
 # =====================
 # IMPORTAÇÃO
 # =====================
-elif menu=="Importação":
+elif menu == "Importação":
     st.header("Importação de Lançamentos")
-    arq=st.file_uploader("Arquivo",type=["csv","xlsx","xls"])
-    if arq:
+
+    arquivo = st.file_uploader("Selecione o arquivo (CSV, XLSX ou XLS)", type=["csv", "xlsx", "xls"])
+
+    def _read_uploaded(file):
+        name = file.name.lower()
+        if name.endswith(".csv"):
+            return pd.read_csv(file, sep=None, engine="python", dtype=str)
+        if name.endswith(".xlsx"):
+            return pd.read_excel(file, engine="openpyxl", dtype=str)
+        if name.endswith(".xls"):
+            return pd.read_excel(file, engine="xlrd", dtype=str)
+        raise RuntimeError("Formato não suportado.")
+
+    if arquivo is not None:
         try:
-            if arq.name.lower().endswith(".csv"):
-                df=pd.read_csv(arq,sep=None,engine="python",dtype=str)
-            elif arq.name.lower().endswith(".xlsx"):
-                df=pd.read_excel(arq,engine="openpyxl",dtype=str)
-            else:
-                df=pd.read_excel(arq,engine="xlrd",dtype=str)
-            df.columns=[c.strip().lower().replace("\ufeff","") for c in df.columns]
-            mapa={"data":["data","data lançamento","data lancamento","dt","lançamento","data mov","data movimento"],
-                  "descrição":["descrição","descricao","descricão","histórico","historico","detalhe","hist","descricao/historico"],
-                  "valor":["valor","valor (r$)","valor r$","vlr","amount","valorlancamento","valor lancamento"]}
-            col_map={}
-            for alvo,poss in mapa.items():
+            df = _read_uploaded(arquivo)
+
+            # limpar cabeçalhos e normalizar
+            df.columns = [c.strip().lower().replace("\ufeff", "") for c in df.columns]
+
+            mapa_colunas = {
+                "data": ["data", "data lançamento", "data lancamento", "dt", "lançamento", "data mov", "data movimento"],
+                "descrição": ["descrição", "descricao", "descricão", "histórico", "historico", "detalhe", "hist", "descricao/historico"],
+                "valor": ["valor", "valor (r$)", "valor r$", "vlr", "amount", "valorlancamento", "valor lancamento"]
+            }
+
+            col_map = {}
+            for alvo, poss in mapa_colunas.items():
                 for p in poss:
-                    if p in df.columns: col_map[alvo]=p; break
+                    if p in df.columns:
+                        col_map[alvo] = p
+                        break
+
             if "data" not in col_map or "valor" not in col_map:
-                st.error(f"Arquivo inválido. Colunas lidas: {list(df.columns)}"); st.stop()
+                st.error(f"Arquivo inválido. Colunas lidas: {list(df.columns)}")
+                st.stop()
+
             if "descrição" not in col_map:
-                df["descrição"]=""
-                col_map["descrição"]="descrição"
-            df=df.rename(columns={col_map["data"]:"Data",col_map["descrição"]:"Descrição",col_map["valor"]:"Valor"})
-            df=df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
-            df["Data"]=df["Data"].apply(parse_date)
-            df["Valor"]=df["Valor"].apply(parse_money)
-            contas=[r[0] for r in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
-            conta_sel=st.selectbox("Conta destino",contas)
-            df["Subcategoria"]="Nenhuma"
-            gb=GridOptionsBuilder.from_dataframe(df)
+                df["descrição"] = ""
+                col_map["descrição"] = "descrição"
+
+            df = df.rename(columns={
+                col_map["data"]: "Data",
+                col_map["descrição"]: "Descrição",
+                col_map["valor"]: "Valor"
+            })
+
+            # remover linhas de saldo
+            df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
+
+            # conversões
+            df["Data"] = df["Data"].apply(parse_date)
+            df["Valor"] = df["Valor"].apply(parse_money)
+
+            # selecionar conta
+            contas = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
+            if not contas:
+                st.error("Nenhuma conta cadastrada. Vá em Configurações → Contas.")
+                st.stop()
+            conta_sel = st.selectbox("Selecione a conta destino", contas)
+
+            # se for cartão de crédito → perguntar mês/ano da fatura
+            mes_ref_cc, ano_ref_cc, dia_venc_cc = None, None, None
+            if conta_sel.lower().startswith("cartão de crédito"):
+                cursor.execute("SELECT dia_vencimento FROM contas WHERE nome=?", (conta_sel,))
+                row = cursor.fetchone()
+                dia_venc_cc = row[0] if row and row[0] else 1
+                st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: {dia_venc_cc}.")
+                mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
+
+            # subcategorias
+            cursor.execute("""
+                SELECT s.id, s.nome, c.nome
+                FROM subcategorias s
+                JOIN categorias c ON s.categoria_id = c.id
+                ORDER BY c.nome, s.nome
+            """)
+            subcat_map = {"Nenhuma": None}
+            for sid, s_nome, c_nome in cursor.fetchall():
+                subcat_map[f"{c_nome} → {s_nome}"] = sid
+
+            df["Subcategoria"] = "Nenhuma"
+
+            # grade de pré-visualização
+            gb = GridOptionsBuilder.from_dataframe(df)
             gb.configure_default_column(editable=False)
-            gb.configure_column("Subcategoria",editable=True,cellEditor="agSelectCellEditor",cellEditorParams={"values":["Nenhuma"]})
-            grid=AgGrid(df,gridOptions=gb.build(),update_mode=GridUpdateMode.VALUE_CHANGED,fit_columns_on_grid_load=True,height=420)
-            df_edit=pd.DataFrame(grid["data"])
-            if st.button("Importar"):
-                for _,row in df_edit.iterrows():
-                    if pd.isna(row["Data"]) or row["Valor"] is None: continue
-                    cursor.execute("INSERT INTO transactions(date,description,value,account) VALUES(?,?,?,?)",
-                                   (row["Data"].strftime("%Y-%m-%d"),str(row["Descrição"]),float(row["Valor"]),conta_sel))
+            gb.configure_column("Subcategoria", editable=True,
+                                cellEditor="agSelectCellEditor",
+                                cellEditorParams={"values": list(subcat_map.keys())})
+            grid = AgGrid(df, gridOptions=gb.build(),
+                          update_mode=GridUpdateMode.VALUE_CHANGED,
+                          fit_columns_on_grid_load=True, height=420, theme="balham")
+
+            df_editado = pd.DataFrame(grid["data"])
+
+            if st.button("Importar lançamentos"):
+                inserted = 0
+                for _, row in df_editado.iterrows():
+                    desc = str(row["Descrição"])
+                    val = row["Valor"]
+                    dt = row["Data"]
+
+                    if pd.isna(dt) or val is None:
+                        continue
+
+                    valf = float(val)
+
+                    if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
+                        dia = min(dia_venc_cc, ultimo_dia_do_mes(ano_ref_cc, mes_ref_cc))
+                        dt = date(ano_ref_cc, mes_ref_cc, dia)
+                        valf = -valf  # inverter sinal para cartão
+
+                    cursor.execute("""
+                        INSERT INTO transactions (date, description, value, account, subcategoria_id)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        dt.strftime("%Y-%m-%d"),
+                        desc,
+                        valf,
+                        conta_sel,
+                        subcat_map.get(row["Subcategoria"], None)
+                    ))
+                    inserted += 1
                 conn.commit()
-                st.success("Importado com sucesso!")
+                st.success(f"{inserted} lançamentos importados com sucesso!")
                 st.rerun()
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro ao importar: {e}")
 
 # =====================
 # CONFIGURAÇÕES
