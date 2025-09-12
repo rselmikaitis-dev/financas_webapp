@@ -56,6 +56,7 @@ if "conn" not in st.session_state:
 conn = st.session_state.conn
 cursor = conn.cursor()
 
+# Tabela contas
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS contas (
         id INTEGER PRIMARY KEY,
@@ -64,6 +65,7 @@ cursor.execute("""
     )
 """)
 
+# Tabela categorias
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS categorias (
         id INTEGER PRIMARY KEY,
@@ -73,16 +75,24 @@ cursor.execute("""
     )
 """)
 
+# Tabela lançamentos
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY,
         date TEXT,
         description TEXT,
         value REAL,
-        account TEXT,
-        categoria_id INTEGER
+        account TEXT
     )
 """)
+
+# Garante que transactions tenha a coluna categoria_id
+cursor.execute("PRAGMA table_info(transactions)")
+cols = [c[1] for c in cursor.fetchall()]
+if "categoria_id" not in cols:
+    cursor.execute("ALTER TABLE transactions ADD COLUMN categoria_id INTEGER")
+    conn.commit()
+
 conn.commit()
 
 # =====================
