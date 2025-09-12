@@ -186,7 +186,7 @@ elif menu == "Importação":
 
             mapa_colunas = {
                 "data": ["data", "data lançamento", "data lancamento", "dt", "lançamento", "data mov", "data movimento"],
-                "descrição": ["descrição", "descricao", "descricão", "histórico", "historico", "detalhe", "hist", "descricao/historico"],
+                "descrição": ["descrição", "descricao", "descricão", "histórico", "historico", "detalhe", "hist", "descricao/historico", "lançamento"],
                 "valor": ["valor", "valor (r$)", "valor r$", "vlr", "amount", "valorlancamento", "valor lancamento"]
             }
 
