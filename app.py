@@ -364,8 +364,17 @@ elif menu == "Configurações":
                     st.error("Já existe essa subcategoria nessa categoria.")
 
             # Excluir
-            if st.button("Excluir subcategoria selecionada"):
-                cursor.execute("DELETE FROM subcategorias WHERE nome=?", (sub_sel,))
-                conn.commit()
-                st.warning("Subcategoria excluída.")
-                st.rerun()
+         # Excluir
+if st.button("Excluir subcategoria selecionada"):
+    # Descobre ID da subcategoria
+    cursor.execute("SELECT id FROM subcategorias WHERE nome=?", (sub_sel,))
+    sub_id = cursor.fetchone()
+    if sub_id:
+        sub_id = sub_id[0]
+        # Remove referência nos lançamentos
+        cursor.execute("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", (sub_id,))
+        # Agora exclui a subcategoria
+        cursor.execute("DELETE FROM subcategorias WHERE id=?", (sub_id,))
+        conn.commit()
+        st.warning("Subcategoria excluída. Lançamentos permaneceram, mas sem categoria atribuída.")
+        st.rerun()
