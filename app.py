@@ -267,7 +267,7 @@ elif menu == "📥 Importação":
                         cursor.execute(
                             "INSERT INTO transactions (date, description, value, account) VALUES (?, ?, ?, ?)",
                             (
-                                pd.to_datetime(row["Data"], errors="coerce", dayfirst=True).strftime("%Y-%m-%d"),
+                                row["Data"],   # grava exatamente como está na prévia
                                 str(row["Descrição"]),
                                 float(row["Valor"]),
                                 conta_escolhida
