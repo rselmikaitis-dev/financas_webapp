@@ -220,7 +220,6 @@ elif menu == "Importação":
 
             # conversões
             df["Data"] = df["Data"].apply(parse_date)
-            # transformar em string dd/mm/YYYY para o grid
             df["Data"] = df["Data"].apply(lambda x: x.strftime("%d/%m/%Y") if isinstance(x, (datetime, date)) else str(x))
             df["Valor"] = df["Valor"].apply(parse_money)
 
@@ -240,20 +239,10 @@ elif menu == "Importação":
                 st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: {dia_venc_cc}.")
                 mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
 
-            # carregar categorias e subcategorias
+            # carregar categorias
             cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
             categorias = cursor.fetchall()
             cat_map = {c[1]: c[0] for c in categorias}
-
-            cursor.execute("""
-                SELECT s.id, s.nome, c.nome
-                FROM subcategorias s
-                JOIN categorias c ON s.categoria_id = c.id
-                ORDER BY c.nome, s.nome
-            """)
-            subcat_map = {"Nenhuma": None}
-            for sid, s_nome, c_nome in cursor.fetchall():
-                subcat_map[f"{c_nome} → {s_nome}"] = sid
 
             # garantir colunas Categoria e Subcategoria
             if "Categoria" not in df.columns:
@@ -273,9 +262,7 @@ elif menu == "Importação":
             gb.configure_column("Categoria", editable=True,
                                 cellEditor="agSelectCellEditor",
                                 cellEditorParams={"values": ["Nenhuma"] + list(cat_map.keys())})
-            gb.configure_column("Subcategoria", editable=True,
-                                cellEditor="agSelectCellEditor",
-                                cellEditorParams={"values": list(subcat_map.keys())})
+            gb.configure_column("Subcategoria", editable=False)  # bloqueado aqui
             grid = AgGrid(df, gridOptions=gb.build(),
                           update_mode=GridUpdateMode.VALUE_CHANGED,
                           fit_columns_on_grid_load=True, height=420, theme="balham")
@@ -298,7 +285,6 @@ elif menu == "Importação":
                         if valf is None:
                             continue
 
-                    # data
                     if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
                         dia = min(dia_venc_cc, ultimo_dia_do_mes(ano_ref_cc, mes_ref_cc))
                         dt_obj = date(ano_ref_cc, mes_ref_cc, dia)
@@ -309,12 +295,8 @@ elif menu == "Importação":
                     if not isinstance(dt_obj, date):
                         continue
 
-                    cat_sel_grid = row.get("Categoria", "Nenhuma")
-                    sub_sel_grid = row.get("Subcategoria", "Nenhuma")
-
+                    # Só Categoria é salva agora; subcategoria sempre NULL
                     sub_id = None
-                    if sub_sel_grid != "Nenhuma":
-                        sub_id = subcat_map.get(sub_sel_grid)
 
                     cursor.execute("""
                         INSERT INTO transactions (date, description, value, account, subcategoria_id)
