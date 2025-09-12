@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 from datetime import date, datetime
 from streamlit_option_menu import option_menu
+from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 
 st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="wide")
 
@@ -199,8 +200,36 @@ elif menu == "Lançamentos":
     contas = ["Todas"] + [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
     conta_sel = st.selectbox("Filtrar por conta", contas)
 
+    # Carregar categorias e subcategorias
+    cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
+    categorias = cursor.fetchall()
+    cat_map = {c[1]: c[0] for c in categorias}
+    cat_list = ["Todas"] + list(cat_map.keys())
+
+    categoria_sel = st.selectbox("Filtrar por categoria", cat_list)
+
+    subcat_map = {"Nenhuma": None}
+    if categoria_sel != "Todas":
+        cursor.execute("SELECT id, nome FROM subcategorias WHERE categoria_id=? ORDER BY nome", (cat_map[categoria_sel],))
+        subcats = cursor.fetchall()
+        for sid, s_nome in subcats:
+            subcat_map[f"{categoria_sel} → {s_nome}"] = sid
+    else:
+        cursor.execute("""
+            SELECT s.id, s.nome, c.nome
+            FROM subcategorias s
+            JOIN categorias c ON s.categoria_id = c.id
+            ORDER BY c.nome, s.nome
+        """)
+        subcats = cursor.fetchall()
+        for sid, s_nome, c_nome in subcats:
+            subcat_map[f"{c_nome} → {s_nome}"] = sid
+
+    subcat_list = ["Todas"] + list(subcat_map.keys())
+    subcategoria_sel = st.selectbox("Filtrar por subcategoria", subcat_list)
+
     df_lanc = pd.read_sql_query("""
-        SELECT t.date, t.description, t.value, t.account,
+        SELECT t.id, t.date, t.description, t.value, t.account,
                c.nome as categoria, s.nome as subcategoria
         FROM transactions t
         LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
@@ -213,21 +242,126 @@ elif menu == "Lançamentos":
     df_filtrado = df_lanc[(df_lanc["date"].dt.month == mes_ref) & (df_lanc["date"].dt.year == ano_ref)]
     if conta_sel != "Todas":
         df_filtrado = df_filtrado[df_filtrado["account"] == conta_sel]
+    if categoria_sel != "Todas":
+        df_filtrado = df_filtrado[df_filtrado["categoria"] == categoria_sel]
+    if subcategoria_sel != "Todas":
+        sub_nome = subcategoria_sel.split(" → ")[-1]
+        df_filtrado = df_filtrado[df_filtrado["subcategoria"] == sub_nome]
 
     if df_filtrado.empty:
         st.warning(f"Nenhum lançamento encontrado para {mes_ref:02d}/{ano_ref}.")
     else:
-        st.dataframe(
-            df_filtrado.sort_values("date", ascending=True),
-            use_container_width=True
+        df_filtrado = df_filtrado.copy()
+        df_filtrado["Subcategoria"] = df_filtrado["subcategoria"].fillna("Nenhuma")
+        df_filtrado["Categoria"] = df_filtrado["categoria"].fillna("–")
+
+        gb = GridOptionsBuilder.from_dataframe(
+            df_filtrado[["id", "date", "description", "value", "account", "Categoria", "Subcategoria"]]
         )
+        gb.configure_default_column(editable=False)
+        gb.configure_column("Subcategoria", editable=True, cellEditor="agSelectCellEditor",
+                            cellEditorParams={"values": list(subcat_map.keys())})
+        gb.configure_column("Categoria", editable=False)
+        gb.configure_column("id", hide=True)
+        grid_options = gb.build()
+
+        grid = AgGrid(
+            df_filtrado,
+            gridOptions=grid_options,
+            update_mode=GridUpdateMode.VALUE_CHANGED,
+            fit_columns_on_grid_load=True,
+            height=400,
+            theme="balham"
+        )
+
+        df_editado = pd.DataFrame(grid["data"])
+
+        if st.button("Salvar alterações"):
+            for _, row in df_editado.iterrows():
+                sub_id = subcat_map.get(row["Subcategoria"], None)
+                cursor.execute("UPDATE transactions SET subcategoria_id=? WHERE id=?", (sub_id, row["id"]))
+            conn.commit()
+            st.success("Alterações salvas com sucesso!")
+            st.rerun()
 
 # =====================
 # IMPORTAÇÃO
 # =====================
 elif menu == "Importação":
     st.header("Importação de Lançamentos")
-    st.info("Importação ainda não está vinculando categorias. Fluxo básico de upload e salvar pode ser reativado aqui.")
+
+    arquivo = st.file_uploader("Selecione o arquivo (CSV ou XLSX)", type=["csv", "xls", "xlsx"])
+
+    if arquivo is not None:
+        try:
+            if arquivo.name.endswith(".csv"):
+                df = pd.read_csv(arquivo, sep=None, engine="python")
+            else:
+                df = pd.read_excel(arquivo)
+
+            df.columns = [c.strip().lower() for c in df.columns]
+            colunas_esperadas = ["data", "descrição", "valor"]
+            if not all(c in df.columns for c in colunas_esperadas):
+                st.error("Arquivo inválido. Esperado: colunas 'data', 'descrição', 'valor'")
+            else:
+                df = df.rename(columns={"data": "Data", "descrição": "Descrição", "valor": "Valor"})
+                df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
+                df["Data"] = df["Data"].apply(parse_date)
+                df["Valor"] = df["Valor"].apply(parse_money)
+
+                contas = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
+                conta_sel = st.selectbox("Selecione a conta", contas)
+
+                cursor.execute("""
+                    SELECT s.id, s.nome, c.nome
+                    FROM subcategorias s
+                    JOIN categorias c ON s.categoria_id = c.id
+                    ORDER BY c.nome, s.nome
+                """)
+                subcats = cursor.fetchall()
+                subcat_map = {"Nenhuma": None}
+                for sid, s_nome, c_nome in subcats:
+                    subcat_map[f"{c_nome} → {s_nome}"] = sid
+
+                df["Subcategoria"] = "Nenhuma"
+
+                gb = GridOptionsBuilder.from_dataframe(df)
+                gb.configure_default_column(editable=False)
+                gb.configure_column("Subcategoria", editable=True, cellEditor="agSelectCellEditor",
+                                    cellEditorParams={"values": list(subcat_map.keys())})
+                grid_options = gb.build()
+
+                grid = AgGrid(
+                    df,
+                    gridOptions=grid_options,
+                    update_mode=GridUpdateMode.VALUE_CHANGED,
+                    fit_columns_on_grid_load=True,
+                    height=400,
+                    theme="balham"
+                )
+
+                df_editado = pd.DataFrame(grid["data"])
+
+                st.subheader("Prévia dos dados ajustados")
+                st.dataframe(df_editado.head(20), use_container_width=True)
+
+                if st.button("Importar lançamentos"):
+                    for _, row in df_editado.iterrows():
+                        cursor.execute("""
+                            INSERT INTO transactions (date, description, value, account, subcategoria_id)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (
+                            row["Data"].strftime("%Y-%m-%d") if pd.notna(row["Data"]) else None,
+                            str(row["Descrição"]),
+                            row["Valor"],
+                            conta_sel,
+                            subcat_map.get(row["Subcategoria"], None)
+                        ))
+                    conn.commit()
+                    st.success(f"{len(df_editado)} lançamentos importados com sucesso!")
+                    st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao importar: {e}")
 
 # =====================
 # CONFIGURAÇÕES
@@ -323,42 +457,3 @@ elif menu == "Configurações":
                             (cat_map[cat_sel], nova_sub.strip())
                         )
                         conn.commit()
-                        st.success("Subcategoria adicionada!")
-                        st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.error("Essa subcategoria já existe nessa categoria.")
-                else:
-                    st.error("Digite um nome válido.")
-
-            cursor.execute("""
-                SELECT s.id, s.nome, c.nome
-                FROM subcategorias s
-                JOIN categorias c ON s.categoria_id = c.id
-                ORDER BY c.nome, s.nome
-            """)
-            df_sub = pd.DataFrame(cursor.fetchall(), columns=["ID", "Subcategoria", "Categoria"])
-
-            if not df_sub.empty:
-                st.dataframe(df_sub)
-                sub_sel = st.selectbox("Selecione uma subcategoria para editar/excluir", df_sub["Subcategoria"])
-
-                new_sub = st.text_input("Novo nome da subcategoria", value=sub_sel)
-                if st.button("Salvar alteração de subcategoria"):
-                    try:
-                        cursor.execute("UPDATE subcategorias SET nome=? WHERE nome=?", (new_sub.strip(), sub_sel))
-                        conn.commit()
-                        st.success("Subcategoria atualizada!")
-                        st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.error("Já existe essa subcategoria nessa categoria.")
-
-                if st.button("Excluir subcategoria selecionada"):
-                    cursor.execute("SELECT id FROM subcategorias WHERE nome=?", (sub_sel,))
-                    row = cursor.fetchone()
-                    if row:
-                        sub_id = row[0]
-                        cursor.execute("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", (sub_id,))
-                        cursor.execute("DELETE FROM subcategorias WHERE id=?", (sub_id,))
-                        conn.commit()
-                        st.warning("Subcategoria excluída. Lançamentos permaneceram, mas sem categoria atribuída.")
-                        st.rerun()
