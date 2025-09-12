@@ -232,32 +232,32 @@ elif menu == "📥 Importação":
                 df = df.iloc[:, :3]
                 df.columns = ["Data", "Descrição", "Valor"]
 
-                # CORREÇÃO: usar formato fixo dd/mm/yyyy
+                # Forçar formato brasileiro
                 df["Data"] = pd.to_datetime(df["Data"], format="%d/%m/%Y", errors="coerce")
                 df["Data"] = df["Data"].dt.strftime("%Y-%m-%d")
 
                 df["ValorNum"] = df["Valor"].apply(parse_money)
+
+                # Novo: coluna de motivo
+                df["Motivo"] = ""
+                df.loc[df["Descrição"].astype(str).str.strip().str.upper().str.startswith("SALDO"), "Motivo"] = "Linha de saldo"
+                df.loc[df["ValorNum"].isna(), "Motivo"] = "Valor inválido"
+
+                # Mostrar todas as linhas na prévia
+                st.markdown("### Pré-visualização (todas as linhas)")
+                st.dataframe(df.head(50), use_container_width=True)
+
+                # Separar apenas válidas para importação
+                df_filtrado = df.loc[df["Motivo"] == "", ["Data", "Descrição", "ValorNum"]].copy()
+                df_filtrado.rename(columns={"ValorNum": "Valor"}, inplace=True)
             except Exception as e:
                 st.toast(f"Erro ao ler/normalizar o arquivo: {e} ⚠️", icon="⚠️")
                 st.stop()
-
-            mask_not_saldo = ~df["Descrição"].astype(str).str.strip().str.upper().str.startswith("SALDO")
-            mask_val_ok = df["ValorNum"].notna()
-            df_filtrado = df.loc[mask_not_saldo & mask_val_ok, ["Data", "Descrição", "ValorNum"]].copy()
-            df_filtrado.rename(columns={"ValorNum": "Valor"}, inplace=True)
-
-            descartadas = df.loc[~mask_not_saldo | ~mask_val_ok]
-            if not descartadas.empty:
-                st.warning(f"{len(descartadas)} linhas foram descartadas (SALDO ou valor inválido).")
-                st.dataframe(descartadas.head(10))
 
             if conta_escolhida.lower().startswith("cartão de crédito"):
                 if data_vencimento:
                     df_filtrado["Data"] = pd.to_datetime(data_vencimento).strftime("%Y-%m-%d")
                 df_filtrado["Valor"] = df_filtrado["Valor"] * -1
-
-            st.markdown("### Pré-visualização")
-            st.dataframe(df_filtrado.head(30), use_container_width=True)
 
             if st.button(f"Importar para {conta_escolhida}"):
                 try:
