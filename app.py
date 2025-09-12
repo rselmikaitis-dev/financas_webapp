@@ -86,14 +86,14 @@ def parse_money(val) -> float | None:
         return None
     s = str(val).strip()
 
-    # remove espaços e símbolos estranhos
+    # remove caracteres estranhos
     s = re.sub(r"[^\d,.-]", "", s)
 
     # trata número brasileiro (ponto milhar, vírgula decimal)
     if "," in s:
-        s = s.replace(".", "").replace(",", ".")  
+        s = s.replace(".", "").replace(",", ".")
 
-    # checa se tem negativo no fim (ex: 129,39-)
+    # checa negativo no fim (ex: 129,39-)
     if s.endswith("-"):
         s = "-" + s[:-1]
 
@@ -236,16 +236,22 @@ elif menu == "📥 Importação":
                 df["Data"] = df["Data"].dt.strftime("%Y-%m-%d")
 
                 df["ValorNum"] = df["Valor"].apply(parse_money)
+
+                # DEBUG parse_money
+                st.write("Checagem parse_money('20.741,12') →", parse_money("20.741,12"))
             except Exception as e:
                 st.toast(f"Erro ao ler/normalizar o arquivo: {e} ⚠️", icon="⚠️")
                 st.stop()
 
-            # Filtro de linhas válidas (ignora saldos)
-            mask_not_saldo = ~df["Descrição"].astype(str).str.upper().str.contains("SALDO")
+            # Filtro de linhas válidas (ignora apenas linhas que COMEÇAM com SALDO)
+            mask_not_saldo = ~df["Descrição"].astype(str).str.strip().str.upper().str.startswith("SALDO")
             mask_val_ok = df["ValorNum"].notna()
             df_filtrado = df.loc[mask_not_saldo & mask_val_ok, ["Data", "Descrição", "ValorNum"]].copy()
             df_filtrado.rename(columns={"ValorNum": "Valor"}, inplace=True)
 
+            # DEBUG logs
+            st.write("Qtd original:", len(df))
+            st.write("Qtd após filtro:", len(df_filtrado))
             descartadas = df.loc[~mask_not_saldo | ~mask_val_ok]
             if not descartadas.empty:
                 st.warning(f"{len(descartadas)} linhas foram descartadas (SALDO ou valor inválido).")
@@ -281,7 +287,6 @@ elif menu == "📥 Importação":
 # =====================
 elif menu == "⚙️ Contas":
     st.header("⚙️ Contas")
-
     cursor.execute("SELECT nome, dia_vencimento FROM contas ORDER BY nome")
     contas_rows = cursor.fetchall()
     df_contas = pd.DataFrame(contas_rows, columns=["Conta", "Dia Vencimento"])
