@@ -61,6 +61,13 @@ cursor.execute("CREATE TABLE IF NOT EXISTS categorias (id INTEGER PRIMARY KEY, n
 cursor.execute("CREATE TABLE IF NOT EXISTS subcategorias (id INTEGER PRIMARY KEY, categoria_id INTEGER, nome TEXT, UNIQUE(categoria_id, nome), FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE CASCADE)")
 cursor.execute("CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY, date TEXT, description TEXT, value REAL, account TEXT, subcategoria_id INTEGER, FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id))")
 conn.commit()
+# Garantir que a coluna "tipo" existe em categorias
+try:
+    cursor.execute("ALTER TABLE categorias ADD COLUMN tipo TEXT DEFAULT 'Despesa Variável'")
+    conn.commit()
+except sqlite3.OperationalError:
+    # Já existe a coluna, ignorar
+    pass
 
 # =====================
 # HELPERS
