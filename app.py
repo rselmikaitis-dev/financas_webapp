@@ -234,7 +234,11 @@ elif menu == "Importação":
                 st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: {dia_venc_cc}.")
                 mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
 
-            # subcategorias
+            # carregar categorias e subcategorias
+            cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
+            categorias = cursor.fetchall()
+            cat_map = {c[1]: c[0] for c in categorias}
+
             cursor.execute("""
                 SELECT s.id, s.nome, c.nome
                 FROM subcategorias s
@@ -247,7 +251,7 @@ elif menu == "Importação":
 
             # garantir colunas Categoria e Subcategoria
             if "Categoria" not in df.columns:
-                df["Categoria"] = ""
+                df["Categoria"] = "Nenhuma"
             if "Subcategoria" not in df.columns:
                 df["Subcategoria"] = "Nenhuma"
 
@@ -260,6 +264,9 @@ elif menu == "Importação":
             # grade de pré-visualização
             gb = GridOptionsBuilder.from_dataframe(df)
             gb.configure_default_column(editable=False)
+            gb.configure_column("Categoria", editable=True,
+                                cellEditor="agSelectCellEditor",
+                                cellEditorParams={"values": ["Nenhuma"] + list(cat_map.keys())})
             gb.configure_column("Subcategoria", editable=True,
                                 cellEditor="agSelectCellEditor",
                                 cellEditorParams={"values": list(subcat_map.keys())})
@@ -281,10 +288,14 @@ elif menu == "Importação":
 
                     valf = float(val)
 
+                    # se for cartão de crédito → aplicar vencimento e inverter sinal
                     if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
                         dia = min(dia_venc_cc, ultimo_dia_do_mes(ano_ref_cc, mes_ref_cc))
                         dt = date(ano_ref_cc, mes_ref_cc, dia)
-                        valf = -valf  # inverter sinal para cartão
+                        valf = -valf
+
+                    # pegar subcategoria escolhida
+                    sub_id = subcat_map.get(row["Subcategoria"], None)
 
                     cursor.execute("""
                         INSERT INTO transactions (date, description, value, account, subcategoria_id)
@@ -294,7 +305,7 @@ elif menu == "Importação":
                         desc,
                         valf,
                         conta_sel,
-                        subcat_map.get(row["Subcategoria"], None)
+                        sub_id
                     ))
                     inserted += 1
                 conn.commit()
@@ -302,7 +313,6 @@ elif menu == "Importação":
                 st.rerun()
         except Exception as e:
             st.error(f"Erro ao importar: {e}")
-
 # =====================
 # CONFIGURAÇÕES
 # =====================
