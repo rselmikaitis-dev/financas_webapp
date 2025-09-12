@@ -212,13 +212,144 @@ elif menu=="Importação":
 # =====================
 # CONFIGURAÇÕES
 # =====================
-elif menu=="Configurações":
+elif menu == "Configurações":
     st.header("Configurações")
-    st.subheader("Reset do banco")
-    if st.button("⚠️ Apagar tudo e começar do zero"):
-        cursor.execute("DELETE FROM transactions")
-        cursor.execute("DELETE FROM subcategorias")
-        cursor.execute("DELETE FROM categorias")
-        cursor.execute("DELETE FROM contas")
-        conn.commit()
-        st.success("Todos os dados foram apagados!")
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["⚠️ Reset", "Contas", "Categorias", "Subcategorias"]
+    )
+
+    # ---- RESET ----
+    with tab1:
+        st.subheader("Reset do banco de dados")
+        confirm = st.checkbox("Confirmo que desejo apagar TODOS os dados")
+        if st.button("Apagar tudo e começar do zero", type="primary", disabled=not confirm):
+            cursor.execute("DELETE FROM transactions")
+            cursor.execute("DELETE FROM subcategorias")
+            cursor.execute("DELETE FROM categorias")
+            cursor.execute("DELETE FROM contas")
+            conn.commit()
+            st.success("Todos os dados foram apagados!")
+
+    # ---- CONTAS ----
+    with tab2:
+        st.subheader("Gerenciar Contas")
+        cursor.execute("SELECT id, nome, dia_vencimento FROM contas ORDER BY nome")
+        df_contas = pd.DataFrame(cursor.fetchall(), columns=["ID", "Conta", "Dia Vencimento"])
+        if not df_contas.empty:
+            st.dataframe(df_contas, use_container_width=True)
+            conta_sel = st.selectbox("Conta existente", df_contas["Conta"])
+            new_name = st.text_input("Novo nome", value=conta_sel)
+            new_venc = st.number_input("Dia vencimento (se cartão)", 1, 31, int(df_contas.loc[df_contas["Conta"] == conta_sel, "Dia Vencimento"].iloc[0] or 1))
+            if st.button("Salvar alterações de conta"):
+                cursor.execute("UPDATE contas SET nome=?, dia_vencimento=? WHERE nome=?", (new_name.strip(), new_venc, conta_sel))
+                cursor.execute("UPDATE transactions SET account=? WHERE account=?", (new_name.strip(), conta_sel))
+                conn.commit()
+                st.success("Conta atualizada!")
+                st.rerun()
+            if st.button("Excluir conta"):
+                cursor.execute("DELETE FROM contas WHERE nome=?", (conta_sel,))
+                conn.commit()
+                st.warning("Conta excluída. Lançamentos ficam com o nome antigo.")
+                st.rerun()
+        else:
+            st.info("Nenhuma conta cadastrada.")
+
+        st.markdown("---")
+        nova = st.text_input("Nova conta")
+        dia_venc = None
+        if nova.lower().startswith("cartão de crédito"):
+            dia_venc = st.number_input("Dia vencimento cartão", 1, 31, 1)
+        if st.button("Adicionar conta"):
+            if nova.strip():
+                try:
+                    cursor.execute("INSERT INTO contas (nome, dia_vencimento) VALUES (?, ?)", (nova.strip(), dia_venc))
+                    conn.commit()
+                    st.success("Conta adicionada!")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("Conta já existe")
+
+    # ---- CATEGORIAS ----
+    with tab3:
+        st.subheader("Gerenciar Categorias")
+        cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
+        df_cat = pd.DataFrame(cursor.fetchall(), columns=["ID", "Nome"])
+        if not df_cat.empty:
+            st.dataframe(df_cat, use_container_width=True)
+            cat_sel = st.selectbox("Categoria existente", df_cat["Nome"])
+            new_name = st.text_input("Novo nome categoria", value=cat_sel)
+            if st.button("Salvar alteração categoria"):
+                cursor.execute("UPDATE categorias SET nome=? WHERE nome=?", (new_name.strip(), cat_sel))
+                conn.commit()
+                st.success("Categoria atualizada!")
+                st.rerun()
+            if st.button("Excluir categoria"):
+                # desvincular subcategorias e transações
+                cursor.execute("SELECT id FROM subcategorias WHERE categoria_id=(SELECT id FROM categorias WHERE nome=?)", (cat_sel,))
+                sub_ids = [r[0] for r in cursor.fetchall()]
+                if sub_ids:
+                    cursor.executemany("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", [(sid,) for sid in sub_ids])
+                    cursor.executemany("DELETE FROM subcategorias WHERE id=?", [(sid,) for sid in sub_ids])
+                cursor.execute("DELETE FROM categorias WHERE nome=?", (cat_sel,))
+                conn.commit()
+                st.warning("Categoria e subcategorias excluídas!")
+                st.rerun()
+        else:
+            st.info("Nenhuma categoria cadastrada.")
+
+        nova_cat = st.text_input("Nova categoria")
+        if st.button("Adicionar categoria"):
+            if nova_cat.strip():
+                try:
+                    cursor.execute("INSERT INTO categorias (nome) VALUES (?)", (nova_cat.strip(),))
+                    conn.commit()
+                    st.success("Categoria adicionada!")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("Categoria já existe")
+
+    # ---- SUBCATEGORIAS ----
+    with tab4:
+        st.subheader("Gerenciar Subcategorias")
+        cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
+        categorias_opts = cursor.fetchall()
+        if not categorias_opts:
+            st.info("Cadastre uma categoria primeiro")
+        else:
+            cat_map = {c[1]: c[0] for c in categorias_opts}
+            cat_sel = st.selectbox("Categoria", list(cat_map.keys()))
+            cursor.execute("SELECT id, nome FROM subcategorias WHERE categoria_id=? ORDER BY nome", (cat_map[cat_sel],))
+            df_sub = pd.DataFrame(cursor.fetchall(), columns=["ID", "Nome"])
+            if not df_sub.empty:
+                st.dataframe(df_sub, use_container_width=True)
+                sub_sel = st.selectbox("Subcategoria existente", df_sub["Nome"])
+                new_sub = st.text_input("Novo nome subcategoria", value=sub_sel)
+                if st.button("Salvar alteração subcategoria"):
+                    cursor.execute("UPDATE subcategorias SET nome=? WHERE id=(SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?)",
+                                   (new_sub.strip(), sub_sel, cat_map[cat_sel]))
+                    conn.commit()
+                    st.success("Subcategoria atualizada!")
+                    st.rerun()
+                if st.button("Excluir subcategoria"):
+                    cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", (sub_sel, cat_map[cat_sel]))
+                    row = cursor.fetchone()
+                    if row:
+                        sid = row[0]
+                        cursor.execute("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", (sid,))
+                        cursor.execute("DELETE FROM subcategorias WHERE id=?", (sid,))
+                        conn.commit()
+                        st.warning("Subcategoria excluída e desvinculada dos lançamentos.")
+                        st.rerun()
+            else:
+                st.info("Nenhuma subcategoria nesta categoria.")
+
+            nova_sub = st.text_input("Nova subcategoria")
+            if st.button("Adicionar subcategoria"):
+                if nova_sub.strip():
+                    try:
+                        cursor.execute("INSERT INTO subcategorias (categoria_id, nome) VALUES (?, ?)", (cat_map[cat_sel], nova_sub.strip()))
+                        conn.commit()
+                        st.success("Subcategoria adicionada!")
+                        st.rerun()
+                    except sqlite3.IntegrityError:
+                        st.error("Já existe essa subcategoria")
