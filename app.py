@@ -56,7 +56,7 @@ if "conn" not in st.session_state:
 conn = st.session_state.conn
 cursor = conn.cursor()
 
-# Tabela contas
+# Contas
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS contas (
         id INTEGER PRIMARY KEY,
@@ -65,34 +65,37 @@ cursor.execute("""
     )
 """)
 
-# Tabela categorias
+# Categorias
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS categorias (
         id INTEGER PRIMARY KEY,
-        tipo TEXT,
-        subtipo TEXT,
-        UNIQUE(tipo, subtipo)
+        nome TEXT UNIQUE
     )
 """)
 
-# Tabela lançamentos
+# Subcategorias
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS subcategorias (
+        id INTEGER PRIMARY KEY,
+        categoria_id INTEGER,
+        nome TEXT,
+        UNIQUE(categoria_id, nome),
+        FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE CASCADE
+    )
+""")
+
+# Lançamentos
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY,
         date TEXT,
         description TEXT,
         value REAL,
-        account TEXT
+        account TEXT,
+        subcategoria_id INTEGER,
+        FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
     )
 """)
-
-# Garante que transactions tenha a coluna categoria_id
-cursor.execute("PRAGMA table_info(transactions)")
-cols = [c[1] for c in cursor.fetchall()]
-if "categoria_id" not in cols:
-    cursor.execute("ALTER TABLE transactions ADD COLUMN categoria_id INTEGER")
-    conn.commit()
-
 conn.commit()
 
 # =====================
@@ -156,7 +159,14 @@ with st.sidebar:
 if menu == "Dashboard":
     st.header("Dashboard Financeiro")
 
-    df_lanc = pd.read_sql_query("SELECT date, description, value, account FROM transactions", conn)
+    df_lanc = pd.read_sql_query("""
+        SELECT t.date, t.description, t.value, t.account,
+               c.nome as categoria, s.nome as subcategoria
+        FROM transactions t
+        LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
+        LEFT JOIN categorias c ON s.categoria_id = c.id
+    """, conn)
+
     if df_lanc.empty:
         st.info("Nenhum lançamento encontrado.")
     else:
@@ -187,15 +197,17 @@ elif menu == "Lançamentos":
     st.header("Lançamentos por período")
 
     mes_ref, ano_ref = seletor_mes_ano("Lançamentos", date.today())
-
     contas = ["Todas"] + [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
     conta_sel = st.selectbox("Filtrar por conta", contas)
 
-    df_lanc = pd.read_sql_query(
-        "SELECT t.date, t.description, t.value, t.account, c.tipo, c.subtipo "
-        "FROM transactions t LEFT JOIN categorias c ON t.categoria_id = c.id",
-        conn
-    )
+    df_lanc = pd.read_sql_query("""
+        SELECT t.date, t.description, t.value, t.account,
+               c.nome as categoria, s.nome as subcategoria
+        FROM transactions t
+        LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
+        LEFT JOIN categorias c ON s.categoria_id = c.id
+    """, conn)
+
     df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
     df_lanc = df_lanc.dropna(subset=["date"])
 
@@ -216,14 +228,14 @@ elif menu == "Lançamentos":
 # =====================
 elif menu == "Importação":
     st.header("Importação de Lançamentos")
-    st.info("Importação mantém os mesmos fluxos de antes (sem categoria atribuída ainda).")
+    st.info("Importação ainda não está vinculando categorias. Fluxo básico de upload e salvar pode ser reativado aqui.")
 
 # =====================
 # CONFIGURAÇÕES
 # =====================
 elif menu == "Configurações":
     st.header("Configurações")
-    tab1, tab2 = st.tabs(["Contas", "Categorias"])
+    tab1, tab2, tab3 = st.tabs(["Contas", "Categorias", "Subcategorias"])
 
     # ---- CONTAS ----
     with tab1:
@@ -232,29 +244,9 @@ elif menu == "Configurações":
         contas_rows = cursor.fetchall()
         df_contas = pd.DataFrame(contas_rows, columns=["Conta", "Dia Vencimento"])
 
-        if df_contas.empty:
-            st.info("Nenhuma conta cadastrada ainda.")
-        else:
-            gb = GridOptionsBuilder.from_dataframe(df_contas)
-            gb.configure_default_column(editable=False)
-            gb.configure_selection(selection_mode="multiple", use_checkbox=True)
-            grid_options = gb.build()
+        if not df_contas.empty:
+            st.dataframe(df_contas)
 
-            grid = AgGrid(
-                df_contas,
-                gridOptions=grid_options,
-                update_mode=GridUpdateMode.SELECTION_CHANGED,
-                fit_columns_on_grid_load=True,
-                height=280,
-                theme="balham"
-            )
-
-            selected_rows = grid.get("selected_rows", [])
-            if isinstance(selected_rows, pd.DataFrame):
-                selected_rows = selected_rows.to_dict("records")
-            nomes_sel = [r.get("Conta") for r in selected_rows] if selected_rows else []
-
-        st.subheader("Adicionar nova conta")
         nova = st.text_input("Nome da nova conta:")
         dia_venc = None
         if nova.lower().startswith("cartão de crédito"):
@@ -263,112 +255,68 @@ elif menu == "Configurações":
         if st.button("Adicionar conta"):
             if nova.strip():
                 try:
-                    cursor.execute("INSERT INTO contas (nome, dia_vencimento) VALUES (?, ?)",
-                                   (nova.strip(), dia_venc))
+                    cursor.execute("INSERT INTO contas (nome, dia_vencimento) VALUES (?, ?)", (nova.strip(), dia_venc))
                     conn.commit()
-                    st.toast(f"Conta '{nova.strip()}' adicionada ➕", icon="💳")
+                    st.success("Conta adicionada!")
                     st.rerun()
                 except sqlite3.IntegrityError:
-                    st.toast("Essa conta já existe ⚠️", icon="⚠️")
+                    st.error("Essa conta já existe.")
             else:
-                st.toast("Digite um nome válido ⚠️", icon="⚠️")
-
-        if nomes_sel:
-            st.subheader("Editar/Excluir contas")
-            if len(nomes_sel) == 1:
-                old_name = nomes_sel[0]
-                new_name = st.text_input("Novo nome", value=old_name)
-                new_dia = st.number_input("Novo vencimento", min_value=1, max_value=31, value=1)
-
-                if st.button("Salvar alteração"):
-                    try:
-                        cursor.execute("UPDATE contas SET nome=?, dia_vencimento=? WHERE nome=?",
-                                       (new_name.strip(), new_dia, old_name))
-                        cursor.execute("UPDATE transactions SET account=? WHERE account=?",
-                                       (new_name.strip(), old_name))
-                        conn.commit()
-                        st.toast(f"Conta atualizada ✅", icon="✏️")
-                        st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.toast(f"Já existe uma conta chamada '{new_name.strip()}' ⚠️", icon="⚠️")
-
-            if st.button("Excluir selecionadas"):
-                for nome in nomes_sel:
-                    cursor.execute("DELETE FROM transactions WHERE account=?", (nome,))
-                    cursor.execute("DELETE FROM contas WHERE nome=?", (nome,))
-                conn.commit()
-                st.toast("Contas excluídas 🗑️", icon="🗑️")
-                st.rerun()
+                st.error("Digite um nome válido.")
 
     # ---- CATEGORIAS ----
     with tab2:
         st.subheader("Gerenciar Categorias")
-        cursor.execute("SELECT id, tipo, subtipo FROM categorias ORDER BY tipo, subtipo")
-        categorias_rows = cursor.fetchall()
-        df_cat = pd.DataFrame(categorias_rows, columns=["ID", "Tipo", "Subtipo"])
+        cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
+        df_cat = pd.DataFrame(cursor.fetchall(), columns=["ID", "Nome"])
 
-        ids_sel = []  # inicializa para evitar NameError
+        if not df_cat.empty:
+            st.dataframe(df_cat)
 
-        if df_cat.empty:
-            st.info("Nenhuma categoria cadastrada ainda.")
-        else:
-            gb = GridOptionsBuilder.from_dataframe(df_cat[["Tipo", "Subtipo"]])
-            gb.configure_default_column(editable=False)
-            gb.configure_selection(selection_mode="multiple", use_checkbox=True)
-            grid_options = gb.build()
-
-            grid = AgGrid(
-                df_cat[["ID", "Tipo", "Subtipo"]],
-                gridOptions=grid_options,
-                update_mode=GridUpdateMode.SELECTION_CHANGED,
-                fit_columns_on_grid_load=True,
-                height=280,
-                theme="balham"
-            )
-
-            selected_rows = grid.get("selected_rows", [])
-            if isinstance(selected_rows, pd.DataFrame):
-                selected_rows = selected_rows.to_dict("records")
-            ids_sel = [r.get("ID") for r in selected_rows] if selected_rows else []
-
-        st.subheader("Adicionar nova categoria")
-        tipo = st.text_input("Tipo")
-        subtipo = st.text_input("Subtipo")
-
+        nova_cat = st.text_input("Nome da nova categoria:")
         if st.button("Adicionar categoria"):
-            if tipo.strip() and subtipo.strip():
+            if nova_cat.strip():
                 try:
-                    cursor.execute("INSERT INTO categorias (tipo, subtipo) VALUES (?, ?)", (tipo.strip(), subtipo.strip()))
+                    cursor.execute("INSERT INTO categorias (nome) VALUES (?)", (nova_cat.strip(),))
                     conn.commit()
-                    st.toast("Categoria adicionada ➕", icon="📂")
+                    st.success("Categoria adicionada!")
                     st.rerun()
                 except sqlite3.IntegrityError:
-                    st.toast("Essa categoria já existe ⚠️", icon="⚠️")
+                    st.error("Essa categoria já existe.")
             else:
-                st.toast("Preencha todos os campos ⚠️", icon="⚠️")
+                st.error("Digite um nome válido.")
 
-        if ids_sel:
-            st.subheader("Editar/Excluir categorias")
-            if len(ids_sel) == 1:
-                cat_id = ids_sel[0]
-                old = df_cat[df_cat["ID"] == cat_id].iloc[0]
-                new_tipo = st.text_input("Novo tipo", value=old["Tipo"])
-                new_subtipo = st.text_input("Novo subtipo", value=old["Subtipo"])
+    # ---- SUBCATEGORIAS ----
+    with tab3:
+        st.subheader("Gerenciar Subcategorias")
+        cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
+        categorias_opts = cursor.fetchall()
 
-                if st.button("Salvar alteração"):
+        if not categorias_opts:
+            st.info("Cadastre uma categoria primeiro.")
+        else:
+            cat_map = {c[1]: c[0] for c in categorias_opts}
+            cat_sel = st.selectbox("Categoria", list(cat_map.keys()))
+            nova_sub = st.text_input("Nome da nova subcategoria:")
+
+            if st.button("Adicionar subcategoria"):
+                if nova_sub.strip():
                     try:
-                        cursor.execute("UPDATE categorias SET tipo=?, subtipo=? WHERE id=?",
-                                       (new_tipo.strip(), new_subtipo.strip(), cat_id))
+                        cursor.execute("INSERT INTO subcategorias (categoria_id, nome) VALUES (?, ?)", (cat_map[cat_sel], nova_sub.strip()))
                         conn.commit()
-                        st.toast("Categoria atualizada ✅", icon="✏️")
+                        st.success("Subcategoria adicionada!")
                         st.rerun()
                     except sqlite3.IntegrityError:
-                        st.toast("Já existe essa categoria ⚠️", icon="⚠️")
+                        st.error("Essa subcategoria já existe nessa categoria.")
+                else:
+                    st.error("Digite um nome válido.")
 
-            if st.button("Excluir selecionadas"):
-                for cid in ids_sel:
-                    cursor.execute("UPDATE transactions SET categoria_id=NULL WHERE categoria_id=?", (cid,))
-                    cursor.execute("DELETE FROM categorias WHERE id=?", (cid,))
-                conn.commit()
-                st.toast("Categorias excluídas 🗑️", icon="🗑️")
-                st.rerun()
+            cursor.execute("""
+                SELECT s.id, s.nome, c.nome
+                FROM subcategorias s
+                JOIN categorias c ON s.categoria_id = c.id
+                ORDER BY c.nome, s.nome
+            """)
+            df_sub = pd.DataFrame(cursor.fetchall(), columns=["ID", "Subcategoria", "Categoria"])
+            if not df_sub.empty:
+                st.dataframe(df_sub)
