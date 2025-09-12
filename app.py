@@ -84,31 +84,23 @@ conn.commit()
 def parse_money(val) -> float | None:
     if pd.isna(val):
         return None
-    s = str(val).strip().upper()
-    if s in ["", "NAN", "NONE"]:
-        return None
+    s = str(val).strip()
 
-    neg = False
-    if s.endswith("-"):
-        neg = True
-        s = s[:-1].strip()
-    if s.endswith("CR"):
-        s = s.replace("CR", "").strip()
-    elif s.endswith("DB") or "DÉB" in s:
-        neg = True
-        s = s.replace("DB", "").replace("DÉB", "").strip()
-
+    # remove espaços e símbolos estranhos
     s = re.sub(r"[^\d,.-]", "", s)
-    if "," in s and "." in s:
-        s = s.replace(".", "").replace(",", ".")
-    elif "," in s:
-        s = s.replace(",", ".")
+
+    # trata número brasileiro (ponto milhar, vírgula decimal)
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")  
+
+    # checa se tem negativo no fim (ex: 129,39-)
+    if s.endswith("-"):
+        s = "-" + s[:-1]
+
     try:
-        num = float(s)
+        return float(s)
     except ValueError:
         return None
-
-    return -num if neg else num
 
 # =====================
 # MENU LATERAL
@@ -223,23 +215,33 @@ elif menu == "📥 Importação":
                     df = pd.read_csv(arquivo, sep=None, engine="python")
                 elif arquivo.name.lower().endswith(".xls"):
                     try:
-                        df = pd.read_excel(arquivo)  # pode falhar
+                        df = pd.read_excel(arquivo)
                     except Exception:
                         dfs = pd.read_html(arquivo)
                         df = dfs[0]
                 else:
                     df = pd.read_excel(arquivo, engine="openpyxl")
 
+                # Ajustar nomes de colunas se vierem do Itaú
+                df = df.rename(columns={
+                    "data": "Data",
+                    "lançamento": "Descrição",
+                    "valor (R$)": "Valor"
+                })
+
                 df = df.iloc[:, :3]
                 df.columns = ["Data", "Descrição", "Valor"]
+
                 df["Data"] = pd.to_datetime(df["Data"], errors="coerce", dayfirst=True)
                 df["Data"] = df["Data"].dt.strftime("%Y-%m-%d")
+
                 df["ValorNum"] = df["Valor"].apply(parse_money)
             except Exception as e:
                 st.toast(f"Erro ao ler/normalizar o arquivo: {e} ⚠️", icon="⚠️")
                 st.stop()
 
-            mask_not_saldo = ~df["Descrição"].astype(str).str.strip().str.upper().eq("SALDO")
+            # Filtro de linhas válidas (ignora saldos)
+            mask_not_saldo = ~df["Descrição"].astype(str).str.upper().str.contains("SALDO")
             mask_val_ok = df["ValorNum"].notna()
             df_filtrado = df.loc[mask_not_saldo & mask_val_ok, ["Data", "Descrição", "ValorNum"]].copy()
             df_filtrado.rename(columns={"ValorNum": "Valor"}, inplace=True)
