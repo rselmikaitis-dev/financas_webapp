@@ -198,12 +198,12 @@ elif menu == "Importação":
     def _read_uploaded(file):
         name = file.name.lower()
         if name.endswith(".csv"):
-            return pd.read_csv(file, sep=None, engine="python")
+            return pd.read_csv(file, sep=None, engine="python", dtype=str)
         if name.endswith(".xlsx"):
-            return pd.read_excel(file, engine="openpyxl")
+            return pd.read_excel(file, engine="openpyxl", dtype=str)
         if name.endswith(".xls"):
             try:
-                return pd.read_excel(file, engine="xlrd")
+                return pd.read_excel(file, engine="xlrd", dtype=str)
             except Exception:
                 raise RuntimeError("Para .xls, instale 'xlrd>=2.0' ou converta para CSV/XLSX.")
         raise RuntimeError("Formato não suportado.")
@@ -229,14 +229,12 @@ elif menu == "Importação":
                         col_map[alvo] = p
                         break
 
-            # Apenas data e valor são obrigatórios
             obrigatorias = ["data", "valor"]
             faltando = [c for c in obrigatorias if c not in col_map]
             if faltando:
                 st.error(f"Arquivo inválido. Faltando colunas obrigatórias: {faltando}")
                 st.stop()
 
-            # Se não houver descrição, cria em branco
             if "descrição" not in col_map:
                 df["descrição"] = ""
                 col_map["descrição"] = "descrição"
@@ -247,21 +245,17 @@ elif menu == "Importação":
                 col_map["valor"]: "Valor"
             })
 
-            # Remove linhas SALDO
             df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
 
-            # Converte
             df["Data"] = df["Data"].apply(parse_date)
             df["Valor"] = df["Valor"].apply(parse_money)
 
-            # Seleciona conta
             contas = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
             if not contas:
                 st.error("Nenhuma conta cadastrada. Vá em Configurações → Contas.")
                 st.stop()
             conta_sel = st.selectbox("Selecione a conta para os lançamentos", contas)
 
-            # Subcategorias
             cursor.execute("""
                 SELECT s.id, s.nome, c.nome
                 FROM subcategorias s
@@ -317,5 +311,5 @@ elif menu == "Importação":
             st.error(f"Erro ao importar: {e}")
 
 # =====================
-# (as abas Lançamentos e Configurações continuam como já estavam na versão anterior)
+# (abas de lançamentos e configurações permanecem iguais à versão anterior)
 # =====================
