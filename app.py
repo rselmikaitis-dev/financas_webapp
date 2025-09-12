@@ -189,6 +189,13 @@ elif menu == "Lançamentos":
     df_lanc["Ano"] = pd.to_datetime(df_lanc["Data"], errors="coerce", dayfirst=True).dt.year
     df_lanc["Mês"] = pd.to_datetime(df_lanc["Data"], errors="coerce", dayfirst=True).dt.month
 
+    # nomes dos meses
+    meses_nomes = {
+        1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+        5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+        9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+    }
+
     # filtros
     col1, col2, col3, col4, col5 = st.columns(5)
 
@@ -211,7 +218,7 @@ elif menu == "Lançamentos":
     anos = ["Todos"] + sorted(df_lanc["Ano"].dropna().unique().astype(int).tolist())
     ano_filtro = col4.selectbox("Ano", anos)
 
-    meses = ["Todos"] + list(range(1, 13))
+    meses = ["Todos"] + [meses_nomes[m] for m in range(1, 13)]
     mes_filtro = col5.selectbox("Mês", meses)
 
     # aplicar filtros
@@ -224,7 +231,8 @@ elif menu == "Lançamentos":
     if ano_filtro != "Todos":
         df_lanc = df_lanc[df_lanc["Ano"] == ano_filtro]
     if mes_filtro != "Todos":
-        df_lanc = df_lanc[df_lanc["Mês"] == mes_filtro]
+        mes_num = [k for k, v in meses_nomes.items() if v == mes_filtro][0]
+        df_lanc = df_lanc[df_lanc["Mês"] == mes_num]
 
     # remover colunas técnicas antes do grid
     df_grid = df_lanc.drop(columns=["id", "subcategoria_id", "Ano", "Mês"], errors="ignore")
@@ -243,13 +251,15 @@ elif menu == "Lançamentos":
 
     if st.button("Salvar alterações"):
         updated = 0
-        for _, row in df_editado.iterrows():
+        for i, row in df_editado.iterrows():
             sub_id = cat_sub_map.get(row.get("Categoria/Subcategoria", "Nenhuma"), None)
-            cursor.execute("UPDATE transactions SET subcategoria_id=? WHERE id=?", (sub_id, df_lanc.iloc[_]["id"]))
+            cursor.execute("UPDATE transactions SET subcategoria_id=? WHERE id=?", (sub_id, df_lanc.iloc[i]["id"]))
             updated += 1
         conn.commit()
         st.success(f"{updated} lançamentos atualizados com sucesso!")
         st.rerun()
+
+
 # =====================
 # CONFIGURAÇÕES
 # =====================
