@@ -239,19 +239,23 @@ elif menu == "Importação":
                 st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: {dia_venc_cc}.")
                 mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
 
-            # carregar categorias
-            cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
-            categorias = cursor.fetchall()
-            cat_map = {c[1]: c[0] for c in categorias}
+            # carregar categorias/subcategorias combinadas
+            cursor.execute("""
+                SELECT s.id, s.nome, c.nome
+                FROM subcategorias s
+                JOIN categorias c ON s.categoria_id = c.id
+                ORDER BY c.nome, s.nome
+            """)
+            cat_sub_map = {"Nenhuma": None}
+            for sid, s_nome, c_nome in cursor.fetchall():
+                cat_sub_map[f"{c_nome} → {s_nome}"] = sid
 
-            # garantir colunas Categoria e Subcategoria
-            if "Categoria" not in df.columns:
-                df["Categoria"] = "Nenhuma"
-            if "Subcategoria" not in df.columns:
-                df["Subcategoria"] = "Nenhuma"
+            # garantir coluna combinada
+            if "Categoria/Subcategoria" not in df.columns:
+                df["Categoria/Subcategoria"] = "Nenhuma"
 
             # ordenar colunas
-            ordem = ["Data", "Descrição", "Valor", "Categoria", "Subcategoria"]
+            ordem = ["Data", "Descrição", "Valor", "Categoria/Subcategoria"]
             cols_existentes = [c for c in ordem if c in df.columns]
             cols_restantes = [c for c in df.columns if c not in ordem]
             df = df[cols_existentes + cols_restantes]
@@ -259,10 +263,9 @@ elif menu == "Importação":
             # grid de pré-visualização
             gb = GridOptionsBuilder.from_dataframe(df)
             gb.configure_default_column(editable=False)
-            gb.configure_column("Categoria", editable=True,
+            gb.configure_column("Categoria/Subcategoria", editable=True,
                                 cellEditor="agSelectCellEditor",
-                                cellEditorParams={"values": ["Nenhuma"] + list(cat_map.keys())})
-            gb.configure_column("Subcategoria", editable=False)  # bloqueado aqui
+                                cellEditorParams={"values": list(cat_sub_map.keys())})
             grid = AgGrid(df, gridOptions=gb.build(),
                           update_mode=GridUpdateMode.VALUE_CHANGED,
                           fit_columns_on_grid_load=True, height=420, theme="balham")
@@ -295,8 +298,8 @@ elif menu == "Importação":
                     if not isinstance(dt_obj, date):
                         continue
 
-                    # Só Categoria é salva agora; subcategoria sempre NULL
-                    sub_id = None
+                    cat_sub_sel = row.get("Categoria/Subcategoria", "Nenhuma")
+                    sub_id = cat_sub_map.get(cat_sub_sel, None)
 
                     cursor.execute("""
                         INSERT INTO transactions (date, description, value, account, subcategoria_id)
@@ -315,7 +318,6 @@ elif menu == "Importação":
                 st.rerun()
         except Exception as e:
             st.error(f"Erro ao importar: {e}")
-
 # =====================
 # CONFIGURAÇÕES
 # =====================
