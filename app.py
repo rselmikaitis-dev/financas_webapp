@@ -6,6 +6,7 @@ import streamlit as st
 from datetime import date, datetime
 from streamlit_option_menu import option_menu
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from streamlit_month_picker import st_month_picker
 
 st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="wide")
 
@@ -96,7 +97,6 @@ def parse_money(val) -> float | None:
         return None
 
 def parse_date(val):
-    """Força formato dd/mm/yyyy"""
     try:
         return datetime.strptime(str(val).strip(), "%d/%m/%Y").date()
     except Exception:
@@ -125,28 +125,28 @@ if menu == "📊 Dashboard":
     if df_lanc.empty:
         st.info("Nenhum lançamento encontrado.")
     else:
-        col1, col2 = st.columns(2)
-        with col1:
-            mes_sel = st.number_input("Mês", min_value=1, max_value=12, value=datetime.today().month)
-        with col2:
-            ano_sel = st.number_input("Ano", min_value=2000, max_value=2100, value=datetime.today().year)
+        st.subheader("Selecione o mês e ano")
+        mes_ano = st_month_picker("Período", default=date.today())
+        if mes_ano:
+            mes_sel = mes_ano.month
+            ano_sel = mes_ano.year
 
-        df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
-        df_lanc = df_lanc.dropna(subset=["date"])
-        df_mes = df_lanc[(df_lanc["date"].dt.month == mes_sel) & (df_lanc["date"].dt.year == ano_sel)]
+            df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
+            df_lanc = df_lanc.dropna(subset=["date"])
+            df_mes = df_lanc[(df_lanc["date"].dt.month == mes_sel) & (df_lanc["date"].dt.year == ano_sel)]
 
-        if df_mes.empty:
-            st.warning(f"Nenhum lançamento encontrado para {mes_sel:02d}/{ano_sel}.")
-        else:
-            entradas = df_mes[df_mes["value"] > 0]["value"].sum()
-            saidas = df_mes[df_mes["value"] < 0]["value"].sum()
-            saldo = entradas + saidas
+            if df_mes.empty:
+                st.warning(f"Nenhum lançamento encontrado para {mes_sel:02d}/{ano_sel}.")
+            else:
+                entradas = df_mes[df_mes["value"] > 0]["value"].sum()
+                saidas = df_mes[df_mes["value"] < 0]["value"].sum()
+                saldo = entradas + saidas
 
-            st.subheader(f"Resumo {mes_sel:02d}/{ano_sel}")
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Entradas", f"R$ {entradas:,.2f}")
-            col2.metric("Saídas", f"R$ {saidas:,.2f}")
-            col3.metric("Saldo", f"R$ {saldo:,.2f}")
+                st.subheader(f"Resumo {mes_sel:02d}/{ano_sel}")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Entradas", f"R$ {entradas:,.2f}")
+                col2.metric("Saídas", f"R$ {saidas:,.2f}")
+                col3.metric("Saldo", f"R$ {saldo:,.2f}")
 
 # =====================
 # LANÇAMENTOS
@@ -154,28 +154,30 @@ if menu == "📊 Dashboard":
 elif menu == "📑 Lançamentos":
     st.header("📑 Lançamentos por período")
 
-    data_ref = st.date_input("Escolha uma data do mês", datetime.today())
-    mes_ref = data_ref.month
-    ano_ref = data_ref.year
+    st.subheader("Selecione o mês e ano")
+    mes_ano = st_month_picker("Período", default=date.today())
+    if mes_ano:
+        mes_ref = mes_ano.month
+        ano_ref = mes_ano.year
 
-    contas = ["Todas"] + [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
-    conta_sel = st.selectbox("Filtrar por conta", contas)
+        contas = ["Todas"] + [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
+        conta_sel = st.selectbox("Filtrar por conta", contas)
 
-    df_lanc = pd.read_sql_query("SELECT date, description, value, account FROM transactions", conn)
-    df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
-    df_lanc = df_lanc.dropna(subset=["date"])
+        df_lanc = pd.read_sql_query("SELECT date, description, value, account FROM transactions", conn)
+        df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
+        df_lanc = df_lanc.dropna(subset=["date"])
 
-    df_filtrado = df_lanc[(df_lanc["date"].dt.month == mes_ref) & (df_lanc["date"].dt.year == ano_ref)]
-    if conta_sel != "Todas":
-        df_filtrado = df_filtrado[df_filtrado["account"] == conta_sel]
+        df_filtrado = df_lanc[(df_lanc["date"].dt.month == mes_ref) & (df_lanc["date"].dt.year == ano_ref)]
+        if conta_sel != "Todas":
+            df_filtrado = df_filtrado[df_filtrado["account"] == conta_sel]
 
-    if df_filtrado.empty:
-        st.warning(f"Nenhum lançamento encontrado para {mes_ref:02d}/{ano_ref}.")
-    else:
-        st.dataframe(
-            df_filtrado.sort_values("date", ascending=True),
-            use_container_width=True
-        )
+        if df_filtrado.empty:
+            st.warning(f"Nenhum lançamento encontrado para {mes_ref:02d}/{ano_ref}.")
+        else:
+            st.dataframe(
+                df_filtrado.sort_values("date", ascending=True),
+                use_container_width=True
+            )
 
 # =====================
 # IMPORTAÇÃO
@@ -197,12 +199,15 @@ elif menu == "📥 Importação":
             row = cursor.fetchone()
             if row and row[0]:
                 dia_venc = int(row[0])
-                mes_ref = st.number_input("Mês da fatura", 1, 12, value=datetime.today().month)
-                ano_ref = st.number_input("Ano da fatura", 2000, 2100, value=datetime.today().year)
-                try:
-                    data_vencimento = date(ano_ref, mes_ref, dia_venc)
-                except ValueError:
-                    st.toast("Data de vencimento inválida ⚠️", icon="⚠️")
+                st.subheader("Selecione o mês e ano da fatura")
+                mes_ano = st_month_picker("Fatura", default=date.today())
+                if mes_ano:
+                    mes_ref = mes_ano.month
+                    ano_ref = mes_ano.year
+                    try:
+                        data_vencimento = date(ano_ref, mes_ref, dia_venc)
+                    except ValueError:
+                        st.toast("Data de vencimento inválida ⚠️", icon="⚠️")
 
         arquivo = st.file_uploader(
             "Selecione o arquivo (3 colunas: Data, Descrição, Valor)",
@@ -222,7 +227,6 @@ elif menu == "📥 Importação":
                 else:
                     df = pd.read_excel(arquivo, engine="openpyxl")
 
-                # Ajustar nomes de colunas se vierem do Itaú
                 df = df.rename(columns={
                     "data": "Data",
                     "lançamento": "Descrição",
@@ -232,24 +236,19 @@ elif menu == "📥 Importação":
                 df = df.iloc[:, :3]
                 df.columns = ["Data", "Descrição", "Valor"]
 
-                # Forçar conversão de data via string
                 df["Data"] = df["Data"].astype(str).apply(parse_date)
                 df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
 
                 df["ValorNum"] = df["Valor"].apply(parse_money)
 
-                # Novo: coluna de motivo
                 df["Motivo"] = ""
                 df.loc[df["Descrição"].astype(str).str.strip().str.upper().str.startswith("SALDO"), "Motivo"] = "Linha de saldo"
                 df.loc[df["ValorNum"].isna(), "Motivo"] = "Valor inválido"
 
-                # Mostrar todas as linhas + diagnóstico de datas
                 st.markdown(f"### Pré-visualização ({len(df)} linhas no total)")
                 st.caption(f"Intervalo de datas: {df['Data'].min()} → {df['Data'].max()}")
-                st.write("Exemplos de datas lidas:", df["Data"].head(10).tolist())
                 st.dataframe(df, use_container_width=True)
 
-                # Separar apenas válidas para importação
                 df_filtrado = df.loc[df["Motivo"] == "", ["Data", "Descrição", "ValorNum"]].copy()
                 df_filtrado.rename(columns={"ValorNum": "Valor"}, inplace=True)
             except Exception as e:
@@ -267,7 +266,7 @@ elif menu == "📥 Importação":
                         cursor.execute(
                             "INSERT INTO transactions (date, description, value, account) VALUES (?, ?, ?, ?)",
                             (
-                                row["Data"],   # grava exatamente como está na prévia
+                                row["Data"],
                                 str(row["Descrição"]),
                                 float(row["Valor"]),
                                 conta_escolhida
