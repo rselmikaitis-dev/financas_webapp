@@ -186,7 +186,7 @@ elif menu == "Importação":
 
             mapa_colunas = {
                 "data": ["data", "data lançamento", "data lancamento", "dt", "lançamento", "data mov", "data movimento"],
-                "descrição": ["descrição", "descricao", "descricão", "histórico", "historico", "detalhe", "hist", "descricao/historico", "lançamento"],
+                "descrição": ["descrição", "descricao", "descricão", "histórico", "historico", "detalhe", "hist", "descricao/historico", "lançamento", "lancamento"],
                 "valor": ["valor", "valor (r$)", "valor r$", "vlr", "amount", "valorlancamento", "valor lancamento"]
             }
 
@@ -245,7 +245,17 @@ elif menu == "Importação":
             for sid, s_nome, c_nome in cursor.fetchall():
                 subcat_map[f"{c_nome} → {s_nome}"] = sid
 
-            df["Subcategoria"] = "Nenhuma"
+            # garantir colunas Categoria e Subcategoria
+            if "Categoria" not in df.columns:
+                df["Categoria"] = ""
+            if "Subcategoria" not in df.columns:
+                df["Subcategoria"] = "Nenhuma"
+
+            # ordenar colunas: Data > Descrição > Valor > Categoria > Subcategoria > resto
+            ordem = ["Data", "Descrição", "Valor", "Categoria", "Subcategoria"]
+            cols_existentes = [c for c in ordem if c in df.columns]
+            cols_restantes = [c for c in df.columns if c not in ordem]
+            df = df[cols_existentes + cols_restantes]
 
             # grade de pré-visualização
             gb = GridOptionsBuilder.from_dataframe(df)
