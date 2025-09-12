@@ -313,7 +313,6 @@ elif menu == "Importação":
                             "data": ["data", "data lançamento", "dt", "lançamento", "data lancamento"],
                             "descrição": ["descrição", "descricao", "histórico", "historico", "detalhe", "detalhes"],
                             "valor": ["valor", "valor (r$)", "vlr", "amount", "valor r$"]
-                }
             }
             col_map = {}
             for alvo, possiveis in mapa_colunas.items():
