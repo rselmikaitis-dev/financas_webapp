@@ -232,8 +232,8 @@ elif menu == "📥 Importação":
                 df = df.iloc[:, :3]
                 df.columns = ["Data", "Descrição", "Valor"]
 
-                # NOVO: usar parse_date linha a linha
-                df["Data"] = df["Data"].apply(parse_date)
+                # Forçar conversão de data via string
+                df["Data"] = df["Data"].astype(str).apply(parse_date)
                 df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
 
                 df["ValorNum"] = df["Valor"].apply(parse_money)
@@ -243,10 +243,10 @@ elif menu == "📥 Importação":
                 df.loc[df["Descrição"].astype(str).str.strip().str.upper().str.startswith("SALDO"), "Motivo"] = "Linha de saldo"
                 df.loc[df["ValorNum"].isna(), "Motivo"] = "Valor inválido"
 
-                # Mostrar todas as linhas + intervalo de datas
+                # Mostrar todas as linhas + diagnóstico de datas
                 st.markdown(f"### Pré-visualização ({len(df)} linhas no total)")
-                if not df["Data"].isna().all():
-                    st.caption(f"Intervalo de datas: {df['Data'].min()} → {df['Data'].max()}")
+                st.caption(f"Intervalo de datas: {df['Data'].min()} → {df['Data'].max()}")
+                st.write("Exemplos de datas lidas:", df["Data"].head(10).tolist())
                 st.dataframe(df, use_container_width=True)
 
                 # Separar apenas válidas para importação
