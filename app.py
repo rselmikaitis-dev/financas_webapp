@@ -1,9 +1,10 @@
 import re
+import io
 import sqlite3
 import bcrypt
 import pandas as pd
 import streamlit as st
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from streamlit_option_menu import option_menu
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 
@@ -15,7 +16,7 @@ st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="w
 AUTH_USERNAME = st.secrets.get("AUTH_USERNAME", "rafael")
 AUTH_PASSWORD_BCRYPT = st.secrets.get(
     "AUTH_PASSWORD_BCRYPT",
-    "$2b$12$abcdefghijklmnopqrstuv1234567890abcdefghijklmnopqrstuv12"  # SUBSTITUA PELO HASH REAL
+    "$2b$12$abcdefghijklmnopqrstuv1234567890abcdefghijklmnopqrstuv12"  # troque pelo hash real
 )
 
 def check_password(plain: str, hashed: str) -> bool:
@@ -97,12 +98,9 @@ def parse_money(val) -> float | None:
     if pd.isna(val):
         return None
     s = str(val).strip()
-    # mantém apenas dígitos, ponto, vírgula e sinal
     s = re.sub(r"[^\d,.-]", "", s)
-    # normaliza pt-BR -> ponto decimal
     if "," in s:
         s = s.replace(".", "").replace(",", ".")
-    # trata números com sinal no fim (ex: "123-")
     if s.endswith("-"):
         s = "-" + s[:-1]
     try:
@@ -118,6 +116,11 @@ def parse_date(val):
         except Exception:
             continue
     return pd.NaT
+
+def ultimo_dia_do_mes(ano: int, mes: int) -> int:
+    if mes == 12:
+        return 31
+    return (date(ano, mes + 1, 1) - timedelta(days=1)).day
 
 def seletor_mes_ano(label="Período", data_default=None):
     if data_default is None:
@@ -146,6 +149,80 @@ def read_table_transactions(conn):
         LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
         LEFT JOIN categorias   c ON s.categoria_id   = c.id
     """, conn)
+
+# ========= Import helpers (robust header/delimiter inference) =========
+def read_csv_flex(uploaded_file) -> pd.DataFrame:
+    """Tenta ler CSV detectando separador; se vier como 1 coluna, relê com ; e depois com ,."""
+    # primeira tentativa – autodetect
+    uploaded_file.seek(0)
+    try:
+        df = pd.read_csv(uploaded_file, sep=None, engine="python", dtype=str)
+    except Exception:
+        df = pd.read_csv(uploaded_file, sep=";", dtype=str)
+    # se veio tudo numa coluna, tentar ; e depois ,
+    if df.shape[1] == 1:
+        uploaded_file.seek(0)
+        try:
+            df = pd.read_csv(uploaded_file, sep=";", dtype=str)
+        except Exception:
+            pass
+    if df.shape[1] == 1:
+        uploaded_file.seek(0)
+        try:
+            df = pd.read_csv(uploaded_file, sep=",", dtype=str)
+        except Exception:
+            pass
+    uploaded_file.seek(0)
+    return df
+
+def promote_header_row(df: pd.DataFrame) -> pd.DataFrame:
+    """Se as colunas não forem reconhecidas, tenta promover uma linha (até a 10ª) como header."""
+    lim = min(10, len(df))
+    for i in range(lim):
+        row = df.iloc[i].astype(str).str.lower().str.strip()
+        has_data  = row.str.contains("data").any()
+        has_valor = row.str.contains("valor|r\\$").any()
+        if has_data and has_valor:
+            new_cols = row.tolist()
+            df2 = df.iloc[i+1:].copy()
+            df2.columns = new_cols
+            df2.reset_index(drop=True, inplace=True)
+            return df2
+    return df
+
+def infer_columns(df: pd.DataFrame):
+    """Se ainda não encontrou Data/Valor, tenta inferir por conteúdo."""
+    cols = list(df.columns)
+    date_regex  = re.compile(r"^\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})\s*$")
+    number_like = re.compile(r"^[\s\-]?\d{1,3}(\.\d{3})*(,\d{2})?$|^[\s\-]?\d+[.,]?\d*$")
+
+    def frac_match(series, pattern):
+        try:
+            return series.astype(str).str.match(pattern).mean()
+        except Exception:
+            return 0.0
+
+    data_cands, valor_cands = [], []
+    for c in cols:
+        s = df[c].astype(str)
+        if frac_match(s, date_regex) >= 0.5:
+            data_cands.append(c)
+        # normaliza para testar "parece número"
+        s2 = s.str.replace(r"[^\d,.-]", "", regex=True)
+        if frac_match(s2, number_like) >= 0.5:
+            valor_cands.append(c)
+
+    data_col  = data_cands[0]  if data_cands else None
+    valor_col = valor_cands[0] if valor_cands else None
+
+    # descrição: a primeira coluna remanescente com maior diversidade de texto
+    desc_col = None
+    if data_col or valor_col:
+        restantes = [c for c in cols if c not in {data_col, valor_col}]
+        if restantes:
+            # escolhe a que tem mais valores únicos (texto diverso)
+            desc_col = max(restantes, key=lambda c: df[c].astype(str).nunique())
+    return data_col, desc_col, valor_col
 
 # =====================
 # MENU
@@ -244,7 +321,6 @@ elif menu == "Lançamentos":
         st.warning(f"Nenhum lançamento encontrado para {mes_ref:02d}/{ano_ref}.")
     else:
         df_filtrado = df_filtrado.copy()
-        # valor inicial da coluna editável deve bater com o dropdown
         df_filtrado["Subcategoria"] = df_filtrado.apply(
             lambda r: "Nenhuma" if pd.isna(r["subcategoria"]) else f'{r["categoria"]} → {r["subcategoria"]}',
             axis=1
@@ -289,10 +365,9 @@ elif menu == "Importação":
     arquivo = st.file_uploader("Selecione o arquivo (CSV, XLSX ou XLS)", type=["csv", "xlsx", "xls"])
 
     def _read_uploaded(file):
-        # LER SEMPRE COMO TEXTO: dtype=str
         name = file.name.lower()
         if name.endswith(".csv"):
-            return pd.read_csv(file, sep=None, engine="python", dtype=str)
+            return read_csv_flex(file)
         if name.endswith(".xlsx"):
             return pd.read_excel(file, engine="openpyxl", dtype=str)
         if name.endswith(".xls"):
@@ -306,31 +381,56 @@ elif menu == "Importação":
         try:
             df = _read_uploaded(arquivo)
 
-            # normaliza cabeçalhos
-            df.columns = [c.strip().lower() for c in df.columns]
+            # limpa linhas e colunas totalmente vazias
+            df = df.dropna(how="all")
+            # normaliza cabeçalhos (se vieram)
+            df.columns = [str(c).strip().lower() for c in df.columns]
 
-            # mapeamento flexível
+            # se não houver colunas reconhecíveis, tenta promover header de alguma linha
+            base_cols = set(df.columns)
+            if len(base_cols) == 0 or all(c.startswith("unnamed") for c in base_cols):
+                df = promote_header_row(df)
+                df.columns = [str(c).strip().lower() for c in df.columns]
+
+            # tenta mapear nomes comuns
             mapa_colunas = {
-                "data": ["data", "data lançamento", "data lancamento", "dt", "lançamento"],
-                "descrição": ["descrição", "descricao", "histórico", "historico", "detalhe"],
-                "valor": ["valor", "valor (r$)", "valor r$", "vlr", "amount"]
+                "data": ["data", "data lançamento", "data lancamento", "dt", "lançamento", "data mov", "data movimento"],
+                "descrição": ["descrição", "descricao", "histórico", "historico", "detalhe", "hist", "descricao/historico"],
+                "valor": ["valor", "valor (r$)", "valor r$", "vlr", "amount", "valorlancamento", "valor lancamento"]
             }
 
-            col_map = {}
-            for alvo, possiveis in mapa_colunas.items():
-                for p in possiveis:
-                    if p in df.columns:
-                        col_map[alvo] = p
-                        break
+            def build_map(cols):
+                col_map = {}
+                for alvo, possiveis in mapa_colunas.items():
+                    for p in possiveis:
+                        if p in cols:
+                            col_map[alvo] = p
+                            break
+                return col_map
+
+            col_map = build_map(df.columns)
+
+            # se ainda faltar 'data' ou 'valor', tenta promover header novamente
+            if "data" not in col_map or "valor" not in col_map:
+                df_try = promote_header_row(df.copy())
+                if not df_try.equals(df):
+                    df = df_try
+                    df.columns = [str(c).strip().lower() for c in df.columns]
+                    col_map = build_map(df.columns)
+
+            # se mesmo assim faltar, tenta inferir por conteúdo
+            if "data" not in col_map or "valor" not in col_map:
+                data_col, desc_col, valor_col = infer_columns(df)
+                if data_col:  col_map["data"] = data_col
+                if valor_col: col_map["valor"] = valor_col
+                if desc_col:  col_map["descrição"] = desc_col
 
             # obrigatórias: data e valor
-            obrigatorias = ["data", "valor"]
-            faltando = [c for c in obrigatorias if c not in col_map]
-            if faltando:
-                st.error(f"Arquivo inválido. Faltando colunas obrigatórias: {faltando}")
+            if "data" not in col_map or "valor" not in col_map:
+                st.error(f"Arquivo inválido. Não foi possível localizar 'data' e/ou 'valor'. Colunas lidas: {list(df.columns)}")
                 st.stop()
 
-            # se não houver descrição, cria em branco
+            # se não houver descrição, cria vazia
             if "descrição" not in col_map:
                 df["descrição"] = ""
                 col_map["descrição"] = "descrição"
@@ -342,7 +442,7 @@ elif menu == "Importação":
                 col_map["valor"]: "Valor"
             })
 
-            # ignora linhas com "SALDO" no início
+            # remove linhas "SALDO" no início da descrição
             df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
 
             # conversões manuais
@@ -355,6 +455,15 @@ elif menu == "Importação":
                 st.error("Nenhuma conta cadastrada. Vá em Configurações → Contas.")
                 st.stop()
             conta_sel = st.selectbox("Selecione a conta para os lançamentos", contas)
+
+            # se for Cartão de Crédito: pedir MÊS/ANO da fatura e usar dia de vencimento cadastrado
+            mes_ref_cc, ano_ref_cc, dia_venc_cc = None, None, None
+            if conta_sel.lower().startswith("cartão de crédito"):
+                cursor.execute("SELECT dia_vencimento FROM contas WHERE nome=?", (conta_sel,))
+                row = cursor.fetchone()
+                dia_venc_cc = row[0] if row and row[0] else 1
+                st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: {dia_venc_cc}.")
+                mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
 
             # subcategorias disponíveis
             cursor.execute("""
@@ -370,6 +479,7 @@ elif menu == "Importação":
             # coluna editável de subcategoria
             df["Subcategoria"] = "Nenhuma"
 
+            # pré-visualização em grade
             gb = GridOptionsBuilder.from_dataframe(df)
             gb.configure_default_column(editable=False)
             gb.configure_column("Subcategoria", editable=True, cellEditor="agSelectCellEditor",
@@ -393,15 +503,28 @@ elif menu == "Importação":
                     dt = row["Data"]
                     valor = row["Valor"]
                     desc = str(row["Descrição"])
+
                     if pd.isna(dt) or valor is None:
                         continue
+
+                    # se for cartão, usa a data de vencimento da fatura (mês/ano escolhidos)
+                    if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
+                        dia = min(dia_venc_cc or 1, ultimo_dia_do_mes(ano_ref_cc, mes_ref_cc))
+                        dt = date(ano_ref_cc, mes_ref_cc, dia)
+                    # senão mantém a data parseada
+
+                    valf = float(valor)
+                    # inversão de sinal para cartão (positivos são débitos)
+                    if conta_sel.lower().startswith("cartão de crédito"):
+                        valf = -valf
+
                     cursor.execute("""
                         INSERT INTO transactions (date, description, value, account, subcategoria_id)
                         VALUES (?, ?, ?, ?, ?)
                     """, (
-                        dt.strftime("%Y-%m-%d"),
+                        dt.strftime("%Y-%m-%d") if isinstance(dt, (date, datetime)) else str(dt),
                         desc,
-                        float(valor),
+                        valf,
                         conta_sel,
                         subcat_map.get(row["Subcategoria"], None)
                     ))
@@ -430,7 +553,7 @@ elif menu == "Configurações":
             conta_sel = st.selectbox("Selecione uma conta para editar/excluir", df_contas["Conta"])
 
             new_name = st.text_input("Novo nome da conta", value=conta_sel)
-            new_venc = st.number_input("Novo dia de vencimento (se cartão)", min_value=1, max_value=31, value=1)
+            new_venc = st.number_input("Dia de vencimento (se cartão)", min_value=1, max_value=31, value=int(df_contas.loc[df_contas["Conta"]==conta_sel, "Dia Vencimento"].iloc[0] or 1))
             if st.button("Salvar alteração de conta"):
                 try:
                     cursor.execute("UPDATE contas SET nome=?, dia_vencimento=? WHERE nome=?", (new_name.strip(), new_venc, conta_sel))
@@ -445,7 +568,7 @@ elif menu == "Configurações":
             if st.button("Excluir conta selecionada"):
                 cursor.execute("DELETE FROM contas WHERE nome=?", (conta_sel,))
                 conn.commit()
-                st.warning("Conta excluída. Lançamentos permanecem com o nome antigo.")
+                st.warning("Conta excluída. Lançamentos permanecem com o nome antigo salvo nos registros.")
                 st.rerun()
         else:
             st.info("Nenhuma conta cadastrada ainda.")
