@@ -6,7 +6,6 @@ import streamlit as st
 from datetime import date, datetime
 from streamlit_option_menu import option_menu
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-from streamlit_month_picker import st_month_picker
 
 st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="wide")
 
@@ -102,6 +101,26 @@ def parse_date(val):
     except Exception:
         return pd.NaT
 
+def seletor_mes_ano(label="Período", data_default=None):
+    """Seletor simples de mês e ano"""
+    if data_default is None:
+        data_default = date.today()
+    anos = list(range(2020, datetime.today().year + 2))
+    meses = {
+        1: "Janeiro", 2: "Fevereiro", 3: "Março",
+        4: "Abril", 5: "Maio", 6: "Junho",
+        7: "Julho", 8: "Agosto", 9: "Setembro",
+        10: "Outubro", 11: "Novembro", 12: "Dezembro"
+    }
+    col1, col2 = st.columns(2)
+    with col1:
+        ano_sel = st.selectbox(f"{label} - Ano", anos, index=anos.index(data_default.year))
+    with col2:
+        mes_sel = st.selectbox(f"{label} - Mês", list(meses.keys()),
+                               format_func=lambda x: meses[x],
+                               index=data_default.month-1)
+    return mes_sel, ano_sel
+
 # =====================
 # MENU LATERAL
 # =====================
@@ -126,27 +145,24 @@ if menu == "📊 Dashboard":
         st.info("Nenhum lançamento encontrado.")
     else:
         st.subheader("Selecione o mês e ano")
-        mes_ano = st_month_picker("Período", default=date.today())
-        if mes_ano:
-            mes_sel = mes_ano.month
-            ano_sel = mes_ano.year
+        mes_sel, ano_sel = seletor_mes_ano("Dashboard", date.today())
 
-            df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
-            df_lanc = df_lanc.dropna(subset=["date"])
-            df_mes = df_lanc[(df_lanc["date"].dt.month == mes_sel) & (df_lanc["date"].dt.year == ano_sel)]
+        df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
+        df_lanc = df_lanc.dropna(subset=["date"])
+        df_mes = df_lanc[(df_lanc["date"].dt.month == mes_sel) & (df_lanc["date"].dt.year == ano_sel)]
 
-            if df_mes.empty:
-                st.warning(f"Nenhum lançamento encontrado para {mes_sel:02d}/{ano_sel}.")
-            else:
-                entradas = df_mes[df_mes["value"] > 0]["value"].sum()
-                saidas = df_mes[df_mes["value"] < 0]["value"].sum()
-                saldo = entradas + saidas
+        if df_mes.empty:
+            st.warning(f"Nenhum lançamento encontrado para {mes_sel:02d}/{ano_sel}.")
+        else:
+            entradas = df_mes[df_mes["value"] > 0]["value"].sum()
+            saidas = df_mes[df_mes["value"] < 0]["value"].sum()
+            saldo = entradas + saidas
 
-                st.subheader(f"Resumo {mes_sel:02d}/{ano_sel}")
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Entradas", f"R$ {entradas:,.2f}")
-                col2.metric("Saídas", f"R$ {saidas:,.2f}")
-                col3.metric("Saldo", f"R$ {saldo:,.2f}")
+            st.subheader(f"Resumo {mes_sel:02d}/{ano_sel}")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Entradas", f"R$ {entradas:,.2f}")
+            col2.metric("Saídas", f"R$ {saidas:,.2f}")
+            col3.metric("Saldo", f"R$ {saldo:,.2f}")
 
 # =====================
 # LANÇAMENTOS
@@ -155,29 +171,26 @@ elif menu == "📑 Lançamentos":
     st.header("📑 Lançamentos por período")
 
     st.subheader("Selecione o mês e ano")
-    mes_ano = st_month_picker("Período", default=date.today())
-    if mes_ano:
-        mes_ref = mes_ano.month
-        ano_ref = mes_ano.year
+    mes_ref, ano_ref = seletor_mes_ano("Lançamentos", date.today())
 
-        contas = ["Todas"] + [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
-        conta_sel = st.selectbox("Filtrar por conta", contas)
+    contas = ["Todas"] + [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
+    conta_sel = st.selectbox("Filtrar por conta", contas)
 
-        df_lanc = pd.read_sql_query("SELECT date, description, value, account FROM transactions", conn)
-        df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
-        df_lanc = df_lanc.dropna(subset=["date"])
+    df_lanc = pd.read_sql_query("SELECT date, description, value, account FROM transactions", conn)
+    df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
+    df_lanc = df_lanc.dropna(subset=["date"])
 
-        df_filtrado = df_lanc[(df_lanc["date"].dt.month == mes_ref) & (df_lanc["date"].dt.year == ano_ref)]
-        if conta_sel != "Todas":
-            df_filtrado = df_filtrado[df_filtrado["account"] == conta_sel]
+    df_filtrado = df_lanc[(df_lanc["date"].dt.month == mes_ref) & (df_lanc["date"].dt.year == ano_ref)]
+    if conta_sel != "Todas":
+        df_filtrado = df_filtrado[df_filtrado["account"] == conta_sel]
 
-        if df_filtrado.empty:
-            st.warning(f"Nenhum lançamento encontrado para {mes_ref:02d}/{ano_ref}.")
-        else:
-            st.dataframe(
-                df_filtrado.sort_values("date", ascending=True),
-                use_container_width=True
-            )
+    if df_filtrado.empty:
+        st.warning(f"Nenhum lançamento encontrado para {mes_ref:02d}/{ano_ref}.")
+    else:
+        st.dataframe(
+            df_filtrado.sort_values("date", ascending=True),
+            use_container_width=True
+        )
 
 # =====================
 # IMPORTAÇÃO
@@ -200,14 +213,11 @@ elif menu == "📥 Importação":
             if row and row[0]:
                 dia_venc = int(row[0])
                 st.subheader("Selecione o mês e ano da fatura")
-                mes_ano = st_month_picker("Fatura", default=date.today())
-                if mes_ano:
-                    mes_ref = mes_ano.month
-                    ano_ref = mes_ano.year
-                    try:
-                        data_vencimento = date(ano_ref, mes_ref, dia_venc)
-                    except ValueError:
-                        st.toast("Data de vencimento inválida ⚠️", icon="⚠️")
+                mes_ref, ano_ref = seletor_mes_ano("Fatura", date.today())
+                try:
+                    data_vencimento = date(ano_ref, mes_ref, dia_venc)
+                except ValueError:
+                    st.toast("Data de vencimento inválida ⚠️", icon="⚠️")
 
         arquivo = st.file_uploader(
             "Selecione o arquivo (3 colunas: Data, Descrição, Valor)",
