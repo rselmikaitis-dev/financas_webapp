@@ -85,22 +85,22 @@ def parse_money(val) -> float | None:
     if pd.isna(val):
         return None
     s = str(val).strip()
-
-    # remove caracteres estranhos
     s = re.sub(r"[^\d,.-]", "", s)
-
-    # trata número brasileiro (ponto milhar, vírgula decimal)
     if "," in s:
         s = s.replace(".", "").replace(",", ".")
-
-    # checa negativo no fim (ex: 129,39-)
     if s.endswith("-"):
         s = "-" + s[:-1]
-
     try:
         return float(s)
     except ValueError:
         return None
+
+def parse_date(val):
+    """Força formato dd/mm/yyyy"""
+    try:
+        return datetime.strptime(str(val).strip(), "%d/%m/%Y").date()
+    except Exception:
+        return pd.NaT
 
 # =====================
 # MENU LATERAL
@@ -232,9 +232,9 @@ elif menu == "📥 Importação":
                 df = df.iloc[:, :3]
                 df.columns = ["Data", "Descrição", "Valor"]
 
-                # Forçar formato brasileiro
-                df["Data"] = pd.to_datetime(df["Data"], format="%d/%m/%Y", errors="coerce")
-                df["Data"] = df["Data"].dt.strftime("%Y-%m-%d")
+                # NOVO: usar parse_date linha a linha
+                df["Data"] = df["Data"].apply(parse_date)
+                df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
 
                 df["ValorNum"] = df["Valor"].apply(parse_money)
 
@@ -243,9 +243,11 @@ elif menu == "📥 Importação":
                 df.loc[df["Descrição"].astype(str).str.strip().str.upper().str.startswith("SALDO"), "Motivo"] = "Linha de saldo"
                 df.loc[df["ValorNum"].isna(), "Motivo"] = "Valor inválido"
 
-                # Mostrar todas as linhas na prévia
-                st.markdown("### Pré-visualização (todas as linhas)")
-                st.dataframe(df.head(50), use_container_width=True)
+                # Mostrar todas as linhas + intervalo de datas
+                st.markdown(f"### Pré-visualização ({len(df)} linhas no total)")
+                if not df["Data"].isna().all():
+                    st.caption(f"Intervalo de datas: {df['Data'].min()} → {df['Data'].max()}")
+                st.dataframe(df, use_container_width=True)
 
                 # Separar apenas válidas para importação
                 df_filtrado = df.loc[df["Motivo"] == "", ["Data", "Descrição", "ValorNum"]].copy()
