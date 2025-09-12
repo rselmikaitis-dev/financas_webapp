@@ -232,26 +232,20 @@ elif menu == "📥 Importação":
                 df = df.iloc[:, :3]
                 df.columns = ["Data", "Descrição", "Valor"]
 
-                df["Data"] = pd.to_datetime(df["Data"], errors="coerce", dayfirst=True)
+                # CORREÇÃO: usar formato fixo dd/mm/yyyy
+                df["Data"] = pd.to_datetime(df["Data"], format="%d/%m/%Y", errors="coerce")
                 df["Data"] = df["Data"].dt.strftime("%Y-%m-%d")
 
                 df["ValorNum"] = df["Valor"].apply(parse_money)
-
-                # DEBUG parse_money
-                st.write("Checagem parse_money('20.741,12') →", parse_money("20.741,12"))
             except Exception as e:
                 st.toast(f"Erro ao ler/normalizar o arquivo: {e} ⚠️", icon="⚠️")
                 st.stop()
 
-            # Filtro de linhas válidas (ignora apenas linhas que COMEÇAM com SALDO)
             mask_not_saldo = ~df["Descrição"].astype(str).str.strip().str.upper().str.startswith("SALDO")
             mask_val_ok = df["ValorNum"].notna()
             df_filtrado = df.loc[mask_not_saldo & mask_val_ok, ["Data", "Descrição", "ValorNum"]].copy()
             df_filtrado.rename(columns={"ValorNum": "Valor"}, inplace=True)
 
-            # DEBUG logs
-            st.write("Qtd original:", len(df))
-            st.write("Qtd após filtro:", len(df_filtrado))
             descartadas = df.loc[~mask_not_saldo | ~mask_val_ok]
             if not descartadas.empty:
                 st.warning(f"{len(descartadas)} linhas foram descartadas (SALDO ou valor inválido).")
