@@ -454,10 +454,12 @@ elif menu == "Configurações":
             st.dataframe(df_contas, use_container_width=True)
             conta_sel = st.selectbox("Conta existente", df_contas["Conta"])
             new_name = st.text_input("Novo nome", value=conta_sel)
-            new_venc = st.number_input(
-                "Dia vencimento (se cartão)", 1, 31,
-                int(df_contas.loc[df_contas["Conta"] == conta_sel, "Dia Vencimento"].iloc[0] or 1)
-            )
+            venc_raw = df_contas.loc[df_contas["Conta"] == conta_sel, "Dia Vencimento"].iloc[0]
+            try:
+                venc_default = int(venc_raw) if pd.notna(venc_raw) else 1
+            except Exception:
+                venc_default = 1
+new_venc = st.number_input("Dia vencimento (se cartão)", 1, 31, venc_default)
             if st.button("Salvar alterações de conta"):
                 cursor.execute("UPDATE contas SET nome=?, dia_vencimento=? WHERE nome=?", (new_name.strip(), new_venc, conta_sel))
                 cursor.execute("UPDATE transactions SET account=? WHERE account=?", (new_name.strip(), conta_sel))
