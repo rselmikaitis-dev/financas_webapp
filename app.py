@@ -234,6 +234,7 @@ elif menu == "Lançamentos":
     df_lanc = pd.read_sql_query(
         """
         SELECT t.id, t.date, t.description, t.value, t.account, t.subcategoria_id,
+               c.nome AS categoria, s.nome AS subcategoria,
                COALESCE(c.nome || ' → ' || s.nome, 'Nenhuma') AS cat_sub
         FROM transactions t
         LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
@@ -253,9 +254,12 @@ elif menu == "Lançamentos":
         "cat_sub": "Categoria/Subcategoria"
     }, inplace=True)
 
+    # Normaliza datas e categorias
     df_lanc["Data"] = pd.to_datetime(df_lanc["Data"], errors="coerce")
     df_lanc["Ano"] = df_lanc["Data"].dt.year
     df_lanc["Mês"] = df_lanc["Data"].dt.month
+    df_lanc["Categoria"] = df_lanc["categoria"].fillna("Nenhuma")
+    df_lanc["Subcategoria"] = df_lanc["subcategoria"].fillna("Nenhuma")
 
     meses_nomes = {
         1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
@@ -268,16 +272,16 @@ elif menu == "Lançamentos":
     contas = ["Todas"] + sorted(df_lanc["Conta"].dropna().unique().tolist())
     conta_filtro = col1.selectbox("Conta", contas)
 
-    cats = ["Todas", "Nenhuma"] + sorted({k.split(" → ")[0] for k in cat_sub_map if k != "Nenhuma"})
+    cats = ["Todas", "Nenhuma"] + sorted(df_lanc["Categoria"].dropna().unique().tolist())
     cat_filtro = col2.selectbox("Categoria", cats)
 
     subs = ["Todas", "Nenhuma"]
     if cat_filtro not in ["Todas", "Nenhuma"]:
-        subs += sorted({k for k in cat_sub_map if k.startswith(cat_filtro + " →")})
+        subs += sorted(df_lanc[df_lanc["Categoria"] == cat_filtro]["Subcategoria"].unique().tolist())
     elif cat_filtro == "Nenhuma":
         subs = ["Todas", "Nenhuma"]
     else:
-        subs += sorted([k for k in cat_sub_map if k != "Nenhuma"])
+        subs += sorted(df_lanc["Subcategoria"].dropna().unique().tolist())
     sub_filtro = col3.selectbox("Subcategoria", subs)
 
     anos = ["Todos"] + sorted(df_lanc["Ano"].dropna().unique().astype(int).tolist())
@@ -290,14 +294,10 @@ elif menu == "Lançamentos":
     dfv = df_lanc.copy()
     if conta_filtro != "Todas":
         dfv = dfv[dfv["Conta"] == conta_filtro]
-    if cat_filtro == "Nenhuma":
-        dfv = dfv[dfv["Categoria/Subcategoria"] == "Nenhuma"]
-    elif cat_filtro != "Todas":
-        dfv = dfv[dfv["Categoria/Subcategoria"].str.startswith(cat_filtro)]
-    if sub_filtro == "Nenhuma":
-        dfv = dfv[dfv["Categoria/Subcategoria"] == "Nenhuma"]
-    elif sub_filtro != "Todas":
-        dfv = dfv[dfv["Categoria/Subcategoria"] == sub_filtro]
+    if cat_filtro != "Todas":
+        dfv = dfv[dfv["Categoria"] == cat_filtro]
+    if sub_filtro != "Todas":
+        dfv = dfv[dfv["Subcategoria"] == sub_filtro]
     if ano_filtro != "Todos":
         dfv = dfv[dfv["Ano"] == int(ano_filtro)]
     if mes_filtro != "Todos":
@@ -368,7 +368,6 @@ elif menu == "Lançamentos":
             conn.commit()
             st.warning(f"{len(selected_ids)} lançamentos excluídos!")
             st.rerun()
-
 # =====================
 # IMPORTAÇÃO
 # =====================
