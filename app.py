@@ -445,27 +445,40 @@ elif menu == "Configurações":
             conn.commit()
             st.success("Todos os dados foram apagados!")
 
-    # ---- CONTAS ----
+      # ---- CONTAS ----
     with tab2:
         st.subheader("Gerenciar Contas")
         cursor.execute("SELECT id, nome, dia_vencimento FROM contas ORDER BY nome")
         df_contas = pd.DataFrame(cursor.fetchall(), columns=["ID", "Conta", "Dia Vencimento"])
+
         if not df_contas.empty:
             st.dataframe(df_contas, use_container_width=True)
             conta_sel = st.selectbox("Conta existente", df_contas["Conta"])
+
             new_name = st.text_input("Novo nome", value=conta_sel)
+
+            # Corrigido: tratamento seguro do dia de vencimento
             venc_raw = df_contas.loc[df_contas["Conta"] == conta_sel, "Dia Vencimento"].iloc[0]
             try:
                 venc_default = int(venc_raw) if pd.notna(venc_raw) else 1
             except Exception:
                 venc_default = 1
-new_venc = st.number_input("Dia vencimento (se cartão)", 1, 31, venc_default)
+
+            new_venc = st.number_input("Dia vencimento (se cartão)", 1, 31, venc_default)
+
             if st.button("Salvar alterações de conta"):
-                cursor.execute("UPDATE contas SET nome=?, dia_vencimento=? WHERE nome=?", (new_name.strip(), new_venc, conta_sel))
-                cursor.execute("UPDATE transactions SET account=? WHERE account=?", (new_name.strip(), conta_sel))
+                cursor.execute(
+                    "UPDATE contas SET nome=?, dia_vencimento=? WHERE nome=?",
+                    (new_name.strip(), new_venc, conta_sel)
+                )
+                cursor.execute(
+                    "UPDATE transactions SET account=? WHERE account=?",
+                    (new_name.strip(), conta_sel)
+                )
                 conn.commit()
                 st.success("Conta atualizada!")
                 st.rerun()
+
             if st.button("Excluir conta"):
                 cursor.execute("DELETE FROM contas WHERE nome=?", (conta_sel,))
                 conn.commit()
@@ -482,13 +495,15 @@ new_venc = st.number_input("Dia vencimento (se cartão)", 1, 31, venc_default)
         if st.button("Adicionar conta"):
             if nova.strip():
                 try:
-                    cursor.execute("INSERT INTO contas (nome, dia_vencimento) VALUES (?, ?)", (nova.strip(), dia_venc))
+                    cursor.execute(
+                        "INSERT INTO contas (nome, dia_vencimento) VALUES (?, ?)",
+                        (nova.strip(), dia_venc)
+                    )
                     conn.commit()
                     st.success("Conta adicionada!")
                     st.rerun()
                 except sqlite3.IntegrityError:
                     st.error("Conta já existe")
-
     # ---- CATEGORIAS ----
     with tab3:
         st.subheader("Gerenciar Categorias")
