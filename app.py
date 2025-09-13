@@ -379,7 +379,7 @@ elif menu == "Lançamentos":
             conn.commit()
             st.success(f"{updated} lançamentos atualizados com sucesso!")
             # força atualização dos filtros (inclusive "Nenhuma")
-            st.experimental_rerun()
+            st.rerun()
 
     with col2:
         if st.button("🗑️ Excluir selecionados") and selected_ids:
