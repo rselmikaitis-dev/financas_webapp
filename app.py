@@ -72,6 +72,13 @@ cursor.execute("""
     )
 """)
 
+# Garante que a categoria especial "Transferências" sempre exista
+cursor.execute(
+    "INSERT OR IGNORE INTO categorias (nome, tipo) VALUES (?, ?)",
+    ("Transferências", "Neutra")
+)
+conn.commit()
+
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS subcategorias (
         id INTEGER PRIMARY KEY,
