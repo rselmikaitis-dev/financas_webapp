@@ -191,6 +191,7 @@ if menu == "Dashboard":
 elif menu == "Lançamentos":
     st.header("Lançamentos")
 
+    # Mapa categoria/subcategoria
     cursor.execute("""
         SELECT s.id, s.nome, c.nome
         FROM subcategorias s
@@ -201,6 +202,7 @@ elif menu == "Lançamentos":
     for sid, s_nome, c_nome in cursor.fetchall():
         cat_sub_map[f"{c_nome} → {s_nome}"] = sid
 
+    # Carrega lançamentos
     df_lanc = pd.read_sql_query(
         """
         SELECT t.id, t.date, t.description, t.value, t.account, t.subcategoria_id,
@@ -213,7 +215,9 @@ elif menu == "Lançamentos":
         conn
     )
 
+    # Ajusta colunas
     df_lanc.rename(columns={
+        "id": "ID",
         "date": "Data",
         "description": "Descrição",
         "value": "Valor",
@@ -221,9 +225,9 @@ elif menu == "Lançamentos":
         "cat_sub": "Categoria/Subcategoria"
     }, inplace=True)
 
-    df_lanc["Data"] = pd.to_datetime(df_lanc["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-    df_lanc["Ano"] = pd.to_datetime(df_lanc["Data"], errors="coerce", dayfirst=True).dt.year
-    df_lanc["Mês"] = pd.to_datetime(df_lanc["Data"], errors="coerce", dayfirst=True).dt.month
+    df_lanc["Data"] = pd.to_datetime(df_lanc["Data"], errors="coerce")
+    df_lanc["Ano"] = df_lanc["Data"].dt.year
+    df_lanc["Mês"] = df_lanc["Data"].dt.month
 
     meses_nomes = {1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"}
 
@@ -249,45 +253,69 @@ elif menu == "Lançamentos":
     meses = ["Todos"] + [meses_nomes[m] for m in range(1, 13)]
     mes_filtro = col5.selectbox("Mês", meses)
 
+    # Aplica filtros
+    dfv = df_lanc.copy()
     if conta_filtro != "Todas":
-        df_lanc = df_lanc[df_lanc["Conta"] == conta_filtro]
+        dfv = dfv[dfv["Conta"] == conta_filtro]
     if cat_filtro == "Nenhuma":
-        df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"] == "Nenhuma"]
+        dfv = dfv[dfv["Categoria/Subcategoria"] == "Nenhuma"]
     elif cat_filtro != "Todas":
-        df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"].str.startswith(cat_filtro)]
+        dfv = dfv[dfv["Categoria/Subcategoria"].str.startswith(cat_filtro)]
     if sub_filtro == "Nenhuma":
-        df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"] == "Nenhuma"]
+        dfv = dfv[dfv["Categoria/Subcategoria"] == "Nenhuma"]
     elif sub_filtro != "Todas":
-        df_lanc = df_lanc[df_lanc["Categoria/Subcategoria"] == sub_filtro]
+        dfv = dfv[dfv["Categoria/Subcategoria"] == sub_filtro]
     if ano_filtro != "Todos":
-        df_lanc = df_lanc[df_lanc["Ano"] == ano_filtro]
+        dfv = dfv[dfv["Ano"] == ano_filtro]
     if mes_filtro != "Todos":
         mes_num = [k for k, v in meses_nomes.items() if v == mes_filtro][0]
-        df_lanc = df_lanc[df_lanc["Mês"] == mes_num]
+        dfv = dfv[dfv["Mês"] == mes_num]
 
-    df_grid = df_lanc.drop(columns=["id", "subcategoria_id", "Ano", "Mês"], errors="ignore")
+    # Grid com checkbox de seleção
+    dfv_display = dfv.copy()
+    dfv_display["Data"] = dfv_display["Data"].dt.strftime("%d/%m/%Y")
+    cols_order = ["ID", "Data", "Descrição", "Valor", "Conta", "Categoria/Subcategoria"]
+    dfv_display = dfv_display[cols_order]
 
-    gb = GridOptionsBuilder.from_dataframe(df_grid)
+    gb = GridOptionsBuilder.from_dataframe(dfv_display)
     gb.configure_default_column(editable=False)
+    gb.configure_selection("multiple", use_checkbox=True)
     gb.configure_column("Categoria/Subcategoria", editable=True,
                         cellEditor="agSelectCellEditor",
                         cellEditorParams={"values": list(cat_sub_map.keys())})
-    grid = AgGrid(df_grid, gridOptions=gb.build(),
-                  update_mode=GridUpdateMode.VALUE_CHANGED,
-                  fit_columns_on_grid_load=True, height=420, theme="balham")
+    grid = AgGrid(
+        dfv_display,
+        gridOptions=gb.build(),
+        update_mode=GridUpdateMode.MODEL_CHANGED,
+        data_return_mode="AS_INPUT",
+        fit_columns_on_grid_load=True,
+        height=420,
+        theme="balham",
+        key="grid_lancamentos"
+    )
     df_editado = pd.DataFrame(grid["data"])
+    selected_ids = [r["ID"] for r in grid["selected_rows"]]
 
-    st.markdown(f"**Total de lançamentos exibidos: {len(df_grid)}**")
+    st.markdown(f"**Total de lançamentos exibidos: {len(dfv_display)}**")
 
-    if st.button("Salvar alterações"):
-        updated = 0
-        for i, row in df_editado.iterrows():
-            sub_id = cat_sub_map.get(row.get("Categoria/Subcategoria", "Nenhuma"), None)
-            cursor.execute("UPDATE transactions SET subcategoria_id=? WHERE id=?", (sub_id, df_lanc.iloc[i]["id"]))
-            updated += 1
-        conn.commit()
-        st.success(f"{updated} lançamentos atualizados com sucesso!")
-        st.rerun()
+    col1, col2 = st.columns([1,1])
+    with col1:
+        if st.button("💾 Salvar alterações"):
+            updated = 0
+            for _, row in df_editado.iterrows():
+                sub_id = cat_sub_map.get(row.get("Categoria/Subcategoria", "Nenhuma"), None)
+                cursor.execute("UPDATE transactions SET subcategoria_id=? WHERE id=?", (sub_id, int(row["ID"])))
+                updated += 1
+            conn.commit()
+            st.success(f"{updated} lançamentos atualizados com sucesso!")
+            st.rerun()
+    with col2:
+        if st.button("🗑️ Excluir selecionados") and selected_ids:
+            cursor.executemany("DELETE FROM transactions WHERE id=?", [(int(i),) for i in selected_ids])
+            conn.commit()
+            st.warning(f"{len(selected_ids)} lançamentos excluídos!")
+            st.rerun()
+
 # =====================
 # IMPORTAÇÃO
 # =====================
