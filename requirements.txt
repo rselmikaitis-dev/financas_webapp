@@ -4,4 +4,4 @@ openpyxl
 bcrypt
 streamlit-option-menu
 streamlit-aggrid
-
+plotly
