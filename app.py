@@ -233,27 +233,39 @@ if menu == "Dashboard":
             c2.metric("Saídas", f"R$ {saidas:,.2f}")
             c3.metric("Saldo", f"R$ {saldo:,.2f}")
 
-            # ===== NOVO: gráfico de pizza das entradas por categoria =====
+            import plotly.express as px
+
+            # ===== Gráfico de pizza das entradas =====
             df_entradas = df_mes_valid[df_mes_valid["value"] > 0].copy()
             if not df_entradas.empty:
-                df_pizza = df_entradas.groupby("categoria")["value"].sum().reset_index()
-                df_pizza = df_pizza.sort_values("value", ascending=False)
+                df_pizza_e = df_entradas.groupby("categoria")["value"].sum().reset_index()
+                df_pizza_e = df_pizza_e.sort_values("value", ascending=False)
 
-                import matplotlib.pyplot as plt
-
-                fig, ax = plt.subplots()
-                ax.pie(
-                    df_pizza["value"],
-                    labels=df_pizza["categoria"],
-                    autopct="%1.1f%%",
-                    startangle=90
+                fig_e = px.pie(
+                    df_pizza_e,
+                    values="value",
+                    names="categoria",
+                    title="Distribuição das Entradas por Categoria"
                 )
-                ax.set_title("Distribuição das Entradas por Categoria")
-                ax.axis("equal")
-
-                st.pyplot(fig)
+                st.plotly_chart(fig_e, use_container_width=True)
             else:
                 st.info("Não há entradas neste período para exibir gráfico.")
+
+            # ===== Gráfico de pizza das saídas =====
+            df_saidas = df_mes_valid[df_mes_valid["value"] < 0].copy()
+            if not df_saidas.empty:
+                df_pizza_s = df_saidas.groupby("categoria")["value"].sum().reset_index()
+                df_pizza_s["value"] = df_pizza_s["value"].abs()  # valores positivos para pizza
+
+                fig_s = px.pie(
+                    df_pizza_s,
+                    values="value",
+                    names="categoria",
+                    title="Distribuição das Saídas por Categoria"
+                )
+                st.plotly_chart(fig_s, use_container_width=True)
+            else:
+                st.info("Não há saídas neste período para exibir gráfico.")
 # =====================
 # LANÇAMENTOS
 # =====================
