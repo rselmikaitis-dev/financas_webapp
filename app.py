@@ -409,141 +409,40 @@ elif menu == "Lançamentos":
 elif menu == "Importação":
     st.header("Importação de Lançamentos")
 
-    # Garante coluna status
-    cursor.execute("PRAGMA table_info(transactions)")
-    cols = [c[1] for c in cursor.fetchall()]
-    if "status" not in cols:
-        cursor.execute("ALTER TABLE transactions ADD COLUMN status TEXT DEFAULT 'final'")
-        conn.commit()
-
-    # ----- RASCUNHOS EXISTENTES -----
-    df_rascunho = pd.read_sql_query("""
-        SELECT t.id, t.date, t.description, t.value, t.account,
-               COALESCE(c.nome || ' → ' || s.nome, 'Nenhuma') as cat_sub
-        FROM transactions t
-        LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
-        LEFT JOIN categorias c ON s.categoria_id = c.id
-        WHERE t.status = 'rascunho'
-        ORDER BY t.date
-    """, conn)
-
-    if not df_rascunho.empty:
-        st.info("Você tem lançamentos em rascunho. Classifique-os ou cancele a importação.")
-
-        # Mapa cat/sub
-        cursor.execute("""
-            SELECT s.id, s.nome, c.nome
-            FROM subcategorias s
-            JOIN categorias c ON s.categoria_id = c.id
-            ORDER BY c.nome, s.nome
-        """)
-        cat_sub_map = {"Nenhuma": None}
-        for sid, s_nome, c_nome in cursor.fetchall():
-            cat_sub_map[f"{c_nome} → {s_nome}"] = sid
-
-        df_grid = df_rascunho.rename(columns={
-            "id": "ID",
-            "date": "Data",
-            "description": "Descrição",
-            "value": "Valor",
-            "account": "Conta",
-            "cat_sub": "Categoria/Subcategoria"
-        })
-
-        gb = GridOptionsBuilder.from_dataframe(df_grid)
-        gb.configure_default_column(editable=False)
-        gb.configure_column("Categoria/Subcategoria", editable=True,
-                            cellEditor="agSelectCellEditor",
-                            cellEditorParams={"values": list(cat_sub_map.keys())})
-        grid = AgGrid(df_grid, gridOptions=gb.build(),
-                      update_mode=GridUpdateMode.MODEL_CHANGED,
-                      data_return_mode="AS_INPUT",
-                      fit_columns_on_grid_load=True, height=420, theme="balham",
-                      key="grid_rascunho")
-        grid_data = grid.get("data", None)
-        if isinstance(grid_data, list) and len(grid_data) > 0:
-            df_editado = pd.DataFrame(grid_data)
-        elif isinstance(grid_data, pd.DataFrame):
-            df_editado = grid_data.copy()
-        else:
-            df_editado = pd.DataFrame(columns=df_grid.columns)
-
-        # Persistir categoria alterada
-        if "ID" in df_editado.columns:
-            for _, row in df_editado.iterrows():
-                cat_sub_sel = row.get("Categoria/Subcategoria", "Nenhuma")
-                sub_id = cat_sub_map.get(cat_sub_sel, None)
-                try:
-                    cursor.execute("UPDATE transactions SET subcategoria_id=? WHERE id=?", (sub_id, int(row["ID"])))
-                except Exception:
-                    pass
-            conn.commit()
-
-        # Trocar conta de todos os rascunhos (em massa)
-        st.markdown("#### Trocar conta de TODOS os rascunhos")
-        contas_all = [r[0] for r in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
-        if contas_all:
-            nova_conta_rasc = st.selectbox("Nova conta para rascunhos", contas_all, key="nova_conta_rasc")
-            if st.button("Aplicar conta aos rascunhos"):
-                cursor.execute("UPDATE transactions SET account=? WHERE status='rascunho'", (nova_conta_rasc,))
-                conn.commit()
-                st.success("Conta atualizada em todos os rascunhos.")
-                st.rerun()
-
-        c1, c2 = st.columns(2)
-        if c1.button("✅ Confirmar importação"):
-            cursor.execute("UPDATE transactions SET status='final' WHERE status='rascunho'")
-            conn.commit()
-            st.success("Lançamentos confirmados com sucesso!")
-            st.rerun()
-        if c2.button("❌ Cancelar importação"):
-            cursor.execute("DELETE FROM transactions WHERE status='rascunho'")
-            conn.commit()
-            st.warning("Importação cancelada e lançamentos apagados.")
-            st.rerun()
-
+    # Selecionar conta destino
+    contas_db = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
+    if not contas_db:
+        st.error("Nenhuma conta cadastrada. Vá em Configurações → Contas.")
     else:
-        # ----- NOVA IMPORTAÇÃO -----
-        # 1) Selecionar conta destino
-        contas_db = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
-        if not contas_db:
-            st.error("Nenhuma conta cadastrada. Vá em Configurações → Contas.")
-            st.stop()
+        conta_sel = st.selectbox("Conta destino", contas_db)
 
-        contas_opts = ["— selecione —"] + contas_db
-        conta_sel = st.selectbox("Conta destino", contas_opts, index=0, key="conta_destino")
+        # Upload de arquivo
+        arquivo = st.file_uploader("Selecione o arquivo (CSV, XLSX ou XLS)", type=["csv", "xlsx", "xls"])
 
-        # 2) Se for cartão, pedir mês/ano da fatura
+        def _read_uploaded(file):
+            name = file.name.lower()
+            if name.endswith(".csv"):
+                return pd.read_csv(file, sep=None, engine="python", dtype=str)
+            if name.endswith(".xlsx"):
+                return pd.read_excel(file, engine="openpyxl", dtype=str)
+            if name.endswith(".xls"):
+                return pd.read_excel(file, engine="xlrd", dtype=str)
+            raise RuntimeError("Formato não suportado.")
+
+        # Se for cartão de crédito → pedir mês/ano
         mes_ref_cc = ano_ref_cc = dia_venc_cc = None
-        if conta_sel != "— selecione —" and is_cartao_credito(conta_sel):
+        if conta_sel and is_cartao_credito(conta_sel):
             cursor.execute("SELECT dia_vencimento FROM contas WHERE nome=?", (conta_sel,))
             row = cursor.fetchone()
             dia_venc_cc = row[0] if row and row[0] else 1
             st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: **{dia_venc_cc}**.")
             mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
 
-        # 3) Upload
-        arquivo = st.file_uploader("Selecione o arquivo (CSV, XLSX ou XLS)", type=["csv", "xlsx", "xls"])
-
-        def _read_uploaded(file):
-            name = file.name.lower()
-            if name.endswith(".csv"):
-                # sep=None tenta detectar separador automaticamente
-                return pd.read_csv(file, sep=None, engine="python", dtype=str)
-            if name.endswith(".xlsx"):
-                return pd.read_excel(file, engine="openpyxl", dtype=str)
-            if name.endswith(".xls"):
-                # Em alguns ambientes o xlrd pode estar desatualizado (1.2.0 sem suporte xls)
-                # Se falhar, oriente converter para CSV/XLSX
-                return pd.read_excel(file, engine="xlrd", dtype=str)
-            raise RuntimeError("Formato não suportado.")
-
         if arquivo is not None:
             try:
                 df = _read_uploaded(arquivo)
                 df.columns = [c.strip().lower().replace("\ufeff", "") for c in df.columns]
 
-                # Mapear 3 colunas: data, descrição, valor
                 mapa_colunas = {
                     "data": ["data","data lançamento","data lancamento","dt","lançamento","data mov","data movimento"],
                     "descrição": ["descrição","descricao","historico","histórico","detalhe","descricao/historico","lançamento"],
@@ -558,73 +457,67 @@ elif menu == "Importação":
 
                 if "data" not in col_map or "valor" not in col_map:
                     st.error(f"Arquivo inválido. Colunas lidas: {list(df.columns)}")
-                    st.stop()
+                else:
+                    if "descrição" not in col_map:
+                        df["descrição"] = ""
+                        col_map["descrição"] = "descrição"
 
-                if "descrição" not in col_map:
-                    df["descrição"] = ""
-                    col_map["descrição"] = "descrição"
+                    df = df.rename(columns={
+                        col_map["data"]: "Data",
+                        col_map["descrição"]: "Descrição",
+                        col_map["valor"]: "Valor"
+                    })
 
-                df = df.rename(columns={
-                    col_map["data"]: "Data",
-                    col_map["descrição"]: "Descrição",
-                    col_map["valor"]: "Valor"
-                })
+                    # Remove linhas de saldo
+                    df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
 
-                # Remove linhas SALDO
-                df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
+                    # Conversões
+                    df["Data"] = df["Data"].apply(parse_date)
+                    df["Valor"] = df["Valor"].apply(parse_money)
 
-                # Converte campos
-                df["Data"] = df["Data"].apply(parse_date)
-                df["Valor"] = df["Valor"].apply(parse_money)
+                    # Prévia
+                    df_preview = df.copy()
+                    df_preview["Conta destino"] = conta_sel
+                    if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
+                        from calendar import monthrange
+                        dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
+                        dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
+                        df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
 
-                # Prévia
-                df_preview = df.copy()
-                df_preview["Conta destino"] = conta_sel if conta_sel != "— selecione —" else ""
-                if conta_sel != "— selecione —" and is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-                    from calendar import monthrange
-                    dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
-                    dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
-                    df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
-                st.subheader("Pré-visualização")
-                st.dataframe(df_preview, use_container_width=True)
+                    st.subheader("Pré-visualização")
+                    st.dataframe(df_preview, use_container_width=True)
 
-                # Importar como rascunho
-                if st.button("Importar"):
-                    if conta_sel == "— selecione —":
-                        st.warning("Selecione a **Conta destino** para continuar.")
-                        st.stop()
-                    from calendar import monthrange
-                    inserted = 0
-                    for _, r in df.iterrows():
-                        desc = str(r["Descrição"])
-                        val = r["Valor"]
-                        if val is None:
-                            continue
+                    # Importar direto (sem rascunho, já final)
+                    if st.button("Importar lançamentos"):
+                        from calendar import monthrange
+                        inserted = 0
+                        for _, r in df.iterrows():
+                            desc = str(r["Descrição"])
+                            val = r["Valor"]
+                            if val is None:
+                                continue
 
-                        # Regras de data/valor
-                        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-                            dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
-                            dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
-                            val = -abs(val)  # cartão sempre débito (saída)
-                        else:
-                            dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
+                            # Regras de data/valor
+                            if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
+                                dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
+                                dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
+                                val = -abs(val)  # sempre débito no cartão
+                            else:
+                                dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
+                            if not isinstance(dt_obj, date):
+                                continue
 
-                        if not isinstance(dt_obj, date):
-                            continue
+                            cursor.execute("""
+                                INSERT INTO transactions (date, description, value, account, subcategoria_id, status)
+                                VALUES (?, ?, ?, ?, ?, 'final')
+                            """, (dt_obj.strftime("%Y-%m-%d"), desc, val, conta_sel, None))
+                            inserted += 1
+                        conn.commit()
 
-                        cursor.execute("""
-                            INSERT INTO transactions (date, description, value, account, subcategoria_id, status)
-                            VALUES (?, ?, ?, ?, ?, 'rascunho')
-                        """, (dt_obj.strftime("%Y-%m-%d"), desc, float(val), conta_sel, None))
-                        inserted += 1
-                    conn.commit()
-
-                    st.success(f"{inserted} lançamentos adicionados como rascunho. Vá até o topo desta tela para classificar/confirmar.")
-                    st.rerun()
-
+                        st.success(f"{inserted} lançamentos importados com sucesso!")
+                        st.rerun()
             except Exception as e:
                 st.error(f"Erro ao processar arquivo: {e}")
-
 # =====================
 # CONFIGURAÇÕES
 # =====================
