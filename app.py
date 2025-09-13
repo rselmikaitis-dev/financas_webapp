@@ -229,7 +229,11 @@ elif menu == "Lançamentos":
     df_lanc["Ano"] = df_lanc["Data"].dt.year
     df_lanc["Mês"] = df_lanc["Data"].dt.month
 
-    meses_nomes = {1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"}
+    meses_nomes = {
+        1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+        5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+        9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+    }
 
     # ----- FILTROS -----
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -295,12 +299,14 @@ elif menu == "Lançamentos":
         key="grid_lancamentos"
     )
 
-    # Data editada (proteção contra None)
+    # Data editada (robusto contra None ou tipo inesperado)
     grid_data = grid.get("data", None)
-    if grid_data is None or len(grid_data) == 0:
-        df_editado = pd.DataFrame(columns=dfv_display.columns)
-    else:
+    if isinstance(grid_data, list) and len(grid_data) > 0:
         df_editado = pd.DataFrame(grid_data)
+    elif isinstance(grid_data, pd.DataFrame):
+        df_editado = grid_data.copy()
+    else:
+        df_editado = pd.DataFrame(columns=dfv_display.columns)
 
     # Seleção robusta
     selected_ids = []
@@ -313,13 +319,16 @@ elif menu == "Lançamentos":
 
     st.markdown(f"**Total de lançamentos exibidos: {len(dfv_display)}**")
 
-    col1, col2 = st.columns([1,1])
+    col1, col2 = st.columns([1, 1])
     with col1:
         if st.button("💾 Salvar alterações"):
             updated = 0
             for _, row in df_editado.iterrows():
                 sub_id = cat_sub_map.get(row.get("Categoria/Subcategoria", "Nenhuma"), None)
-                cursor.execute("UPDATE transactions SET subcategoria_id=? WHERE id=?", (sub_id, int(row["ID"])))
+                cursor.execute(
+                    "UPDATE transactions SET subcategoria_id=? WHERE id=?",
+                    (sub_id, int(row["ID"]))
+                )
                 updated += 1
             conn.commit()
             st.success(f"{updated} lançamentos atualizados com sucesso!")
