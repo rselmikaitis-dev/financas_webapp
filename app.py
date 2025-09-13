@@ -206,12 +206,17 @@ with st.sidebar:
 if menu == "Dashboard":
     st.header("Dashboard Financeiro")
     df_lanc = read_table_transactions(conn)
+
     if df_lanc.empty:
         st.info("Nenhum lançamento encontrado.")
     else:
         mes_sel, ano_sel = seletor_mes_ano("Dashboard", date.today())
         df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
-        df_mes = df_lanc[(df_lanc["date"].dt.month == mes_sel) & (df_lanc["date"].dt.year == ano_sel)]
+
+        df_mes = df_lanc[
+            (df_lanc["date"].dt.month == mes_sel) &
+            (df_lanc["date"].dt.year == ano_sel)
+        ]
 
         if df_mes.empty:
             st.warning("Nenhum lançamento neste período.")
@@ -227,6 +232,28 @@ if menu == "Dashboard":
             c1.metric("Entradas", f"R$ {entradas:,.2f}")
             c2.metric("Saídas", f"R$ {saidas:,.2f}")
             c3.metric("Saldo", f"R$ {saldo:,.2f}")
+
+            # ===== NOVO: gráfico de pizza das entradas por categoria =====
+            df_entradas = df_mes_valid[df_mes_valid["value"] > 0].copy()
+            if not df_entradas.empty:
+                df_pizza = df_entradas.groupby("categoria")["value"].sum().reset_index()
+                df_pizza = df_pizza.sort_values("value", ascending=False)
+
+                import matplotlib.pyplot as plt
+
+                fig, ax = plt.subplots()
+                ax.pie(
+                    df_pizza["value"],
+                    labels=df_pizza["categoria"],
+                    autopct="%1.1f%%",
+                    startangle=90
+                )
+                ax.set_title("Distribuição das Entradas por Categoria")
+                ax.axis("equal")
+
+                st.pyplot(fig)
+            else:
+                st.info("Não há entradas neste período para exibir gráfico.")
 # =====================
 # LANÇAMENTOS
 # =====================
