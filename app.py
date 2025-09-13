@@ -227,12 +227,15 @@ if menu == "Dashboard":
             c1.metric("Entradas", f"R$ {entradas:,.2f}")
             c2.metric("Saídas", f"R$ {saidas:,.2f}")
             c3.metric("Saldo", f"R$ {saldo:,.2f}")
-
 # =====================
 # LANÇAMENTOS
 # =====================
 elif menu == "Lançamentos":
     st.header("Lançamentos")
+
+    # garante contador para chave do grid
+    if "grid_refresh" not in st.session_state:
+        st.session_state["grid_refresh"] = 0
 
     # ----- MAPA CATEGORIA/SUB -----
     cursor.execute("""
@@ -399,6 +402,7 @@ elif menu == "Lançamentos":
                 del st.session_state["df_lanc"]
             st.session_state["grid_refresh"] += 1
             st.rerun()
+
 # =====================
 # IMPORTAÇÃO
 # =====================
