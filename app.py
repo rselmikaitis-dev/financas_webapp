@@ -295,7 +295,12 @@ elif menu == "Lançamentos":
         key="grid_lancamentos"
     )
 
-    df_editado = pd.DataFrame(grid["data"])
+    # Data editada (proteção contra None)
+    grid_data = grid.get("data", None)
+    if grid_data is None or len(grid_data) == 0:
+        df_editado = pd.DataFrame(columns=dfv_display.columns)
+    else:
+        df_editado = pd.DataFrame(grid_data)
 
     # Seleção robusta
     selected_ids = []
