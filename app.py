@@ -426,7 +426,7 @@ elif menu == "Importação":
                 df["Data"] = df["Data"].apply(parse_date)
                 df["Valor"] = df["Valor"].apply(parse_money)
 
-                # Selecionar conta
+                # Selecionar conta (antes da inserção)
                 contas = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
                 if not contas:
                     st.error("Nenhuma conta cadastrada. Vá em Configurações → Contas.")
@@ -443,6 +443,7 @@ elif menu == "Importação":
                     mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
 
                 # Inserir no banco como rascunho
+                inserted = 0
                 for _, row in df.iterrows():
                     desc = str(row["Descrição"])
                     val = parse_money(row["Valor"])
@@ -460,9 +461,10 @@ elif menu == "Importação":
                         INSERT INTO transactions (date, description, value, account, subcategoria_id, status)
                         VALUES (?, ?, ?, ?, ?, 'rascunho')
                     """, (dt_obj.strftime("%Y-%m-%d"), desc, val, conta_sel, None))
+                    inserted += 1
                 conn.commit()
 
-                st.success("Arquivo carregado! Agora classifique os lançamentos em rascunho.")
+                st.success(f"Arquivo carregado! {inserted} lançamentos adicionados como rascunho. Agora classifique-os.")
                 st.rerun()
 
             except Exception as e:
