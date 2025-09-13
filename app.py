@@ -329,6 +329,7 @@ elif menu == "Importação":
 
         # Renomear colunas
         df_grid = df_rascunho.rename(columns={
+            "id": "ID",
             "date": "Data",
             "description": "Descrição",
             "value": "Valor",
@@ -348,11 +349,16 @@ elif menu == "Importação":
         df_editado = pd.DataFrame(grid["data"])
 
         # Salvar alterações automaticamente
-        for i, row in df_editado.iterrows():
-            cat_sub_sel = row.get("Categoria/Subcategoria", "Nenhuma")
-            sub_id = cat_sub_map.get(cat_sub_sel, None)
-            cursor.execute("UPDATE transactions SET subcategoria_id=? WHERE id=?", (sub_id, row["ID"]))
-        conn.commit()
+        id_col = "ID" if "ID" in df_editado.columns else None
+        if id_col:
+            for _, row in df_editado.iterrows():
+                cat_sub_sel = row.get("Categoria/Subcategoria", "Nenhuma")
+                sub_id = cat_sub_map.get(cat_sub_sel, None)
+                cursor.execute(
+                    "UPDATE transactions SET subcategoria_id=? WHERE id=?",
+                    (sub_id, row[id_col])
+                )
+            conn.commit()
 
         col1, col2 = st.columns(2)
         if col1.button("✅ Confirmar importação"):
