@@ -448,12 +448,15 @@ elif menu == "Importação":
                             val = parse_money(row["Valor"])
                             if val is None:
                                 continue
-                            if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
-                                from calendar import monthrange
+                           if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
+                            from calendar import monthrange
+                                # Último dia do mês escolhido para evitar datas inválidas (ex: 30/02)
                                 ultimo_dia = monthrange(ano_ref_cc, mes_ref_cc)[1]
                                 dia = min(dia_venc_cc, ultimo_dia)
+                                # Data final da fatura
                                 dt_obj = date(ano_ref_cc, mes_ref_cc, dia)
-                                val = -val
+                                # Inverte o valor: no cartão, créditos são negativos (débito na fatura)
+                                val = -abs(val)
                             else:
                                 dt_obj = row["Data"] if isinstance(row["Data"], date) else parse_date(row["Data"])
                             if not isinstance(dt_obj, date):
