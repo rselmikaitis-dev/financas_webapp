@@ -208,10 +208,10 @@ elif menu == "Lançamentos":
         SELECT t.id, t.date, t.description, t.value, t.account, t.subcategoria_id,
                COALESCE(c.nome || ' → ' || s.nome, 'Nenhuma') AS cat_sub
         FROM transactions t
-        LEFT JOIN subcategororias s ON t.subcategoria_id = s.id
+        LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
         LEFT JOIN categorias c ON s.categoria_id = c.id
         ORDER BY t.date DESC
-        """.replace("subcategororias", "subcategorias"),  # safe fix de digitação
+        """,
         conn
     )
 
@@ -231,6 +231,7 @@ elif menu == "Lançamentos":
 
     meses_nomes = {1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"}
 
+    # ----- FILTROS -----
     col1, col2, col3, col4, col5 = st.columns(5)
     contas = ["Todas"] + sorted(df_lanc["Conta"].dropna().unique().tolist())
     conta_filtro = col1.selectbox("Conta", contas)
@@ -253,7 +254,7 @@ elif menu == "Lançamentos":
     meses = ["Todos"] + [meses_nomes[m] for m in range(1, 13)]
     mes_filtro = col5.selectbox("Mês", meses)
 
-    # Aplica filtros
+    # ----- APLICA FILTROS -----
     dfv = df_lanc.copy()
     if conta_filtro != "Todas":
         dfv = dfv[dfv["Conta"] == conta_filtro]
@@ -266,12 +267,12 @@ elif menu == "Lançamentos":
     elif sub_filtro != "Todas":
         dfv = dfv[dfv["Categoria/Subcategoria"] == sub_filtro]
     if ano_filtro != "Todos":
-        dfv = dfv[dfv["Ano"] == ano_filtro]
+        dfv = dfv[dfv["Ano"] == int(ano_filtro)]
     if mes_filtro != "Todos":
         mes_num = [k for k, v in meses_nomes.items() if v == mes_filtro][0]
         dfv = dfv[dfv["Mês"] == mes_num]
 
-    # Grid com checkbox de seleção
+    # ----- GRID -----
     dfv_display = dfv.copy()
     dfv_display["Data"] = dfv_display["Data"].dt.strftime("%d/%m/%Y")
     cols_order = ["ID", "Data", "Descrição", "Valor", "Conta", "Categoria/Subcategoria"]
@@ -287,23 +288,21 @@ elif menu == "Lançamentos":
         dfv_display,
         gridOptions=gb.build(),
         update_mode=GridUpdateMode.MODEL_CHANGED,
-        data_return_mode="AS_INPUT",  # evita dependência do enum
+        data_return_mode="AS_INPUT",
         fit_columns_on_grid_load=True,
         height=420,
         theme="balham",
         key="grid_lancamentos"
     )
 
-    # Data editada (sempre vem)
     df_editado = pd.DataFrame(grid["data"])
 
-    # Selecionados: aceita list[dict] OU DataFrame
+    # Seleção robusta
     selected_ids = []
     if "selected_rows" in grid:
         sel_obj = grid["selected_rows"]
-        if isinstance(sel_obj, pd.DataFrame):
-            if "ID" in sel_obj.columns:
-                selected_ids = [int(x) for x in sel_obj["ID"].dropna().tolist()]
+        if isinstance(sel_obj, pd.DataFrame) and "ID" in sel_obj.columns:
+            selected_ids = [int(x) for x in sel_obj["ID"].dropna().tolist()]
         elif isinstance(sel_obj, list):
             selected_ids = [int(r.get("ID")) for r in sel_obj if isinstance(r, dict) and r.get("ID") is not None]
 
