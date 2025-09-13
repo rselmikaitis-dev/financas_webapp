@@ -96,13 +96,12 @@ cursor.execute("""
 
 conn.commit()
 
-# Garantir que a coluna "tipo" existe em categorias
-try:
+# Garantir que a coluna "tipo" existe em categorias (checar antes com PRAGMA)
+cursor.execute("PRAGMA table_info(categorias)")
+cols = [c[1] for c in cursor.fetchall()]
+if "tipo" not in cols:
     cursor.execute("ALTER TABLE categorias ADD COLUMN tipo TEXT DEFAULT 'Despesa Variável'")
     conn.commit()
-except (sqlite3.OperationalError, sqlite3.DatabaseError):
-    # Já existe a coluna, ignorar
-    pass
 
 # =====================
 # HELPERS
