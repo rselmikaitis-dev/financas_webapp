@@ -234,7 +234,7 @@ if menu == "Dashboard":
 elif menu == "Lançamentos":
     st.header("Lançamentos")
 
-    # Mapa categoria/subcategoria
+    # ----- MAPA CATEGORIA/SUB -----
     cursor.execute("""
         SELECT s.id, s.nome, c.nome
         FROM subcategorias s
@@ -245,19 +245,22 @@ elif menu == "Lançamentos":
     for sid, s_nome, c_nome in cursor.fetchall():
         cat_sub_map[f"{c_nome} → {s_nome}"] = sid
 
-    # Carrega lançamentos
-    df_lanc = pd.read_sql_query(
-        """
-        SELECT t.id, t.date, t.description, t.value, t.account, t.subcategoria_id,
-               c.nome AS categoria, s.nome AS subcategoria,
-               COALESCE(c.nome || ' → ' || s.nome, 'Nenhuma') AS cat_sub
-        FROM transactions t
-        LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
-        LEFT JOIN categorias c ON s.categoria_id = c.id
-        ORDER BY t.date DESC
-        """,
-        conn
-    )
+    # ----- CARREGAMENTO DE LANÇAMENTOS -----
+    if "df_lanc" not in st.session_state:
+        st.session_state["df_lanc"] = pd.read_sql_query(
+            """
+            SELECT t.id, t.date, t.description, t.value, t.account, t.subcategoria_id,
+                   c.nome AS categoria, s.nome AS subcategoria,
+                   COALESCE(c.nome || ' → ' || s.nome, 'Nenhuma') AS cat_sub
+            FROM transactions t
+            LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
+            LEFT JOIN categorias c ON s.categoria_id = c.id
+            ORDER BY t.date DESC
+            """,
+            conn
+        )
+
+    df_lanc = st.session_state["df_lanc"].copy()
 
     # Ajusta colunas
     df_lanc.rename(columns={
@@ -285,25 +288,25 @@ elif menu == "Lançamentos":
     # ----- FILTROS -----
     col1, col2, col3, col4, col5 = st.columns(5)
     contas = ["Todas"] + sorted(df_lanc["Conta"].dropna().unique().tolist())
-    conta_filtro = col1.selectbox("Conta", contas)
+    conta_filtro = col1.selectbox("Conta", contas, key="flt_conta")
 
     cats = ["Todas", "Nenhuma"] + sorted(df_lanc["Categoria"].dropna().unique().tolist())
-    cat_filtro = col2.selectbox("Categoria", cats)
+    cat_filtro = col2.selectbox("Categoria", cats, key="flt_categoria")
 
     subs = ["Todas", "Nenhuma"]
     if cat_filtro not in ["Todas", "Nenhuma"]:
-        subs += sorted(df_lanc[df_lanc["Categoria"] == cat_filtro]["Subcategoria"].unique().tolist())
+        subs += sorted(df_lanc[df_lanc["Categoria"] == cat_filtro]["Subcategoria"].dropna().unique().tolist())
     elif cat_filtro == "Nenhuma":
         subs = ["Todas", "Nenhuma"]
     else:
         subs += sorted(df_lanc["Subcategoria"].dropna().unique().tolist())
-    sub_filtro = col3.selectbox("Subcategoria", subs)
+    sub_filtro = col3.selectbox("Subcategoria", subs, key="flt_subcategoria")
 
     anos = ["Todos"] + sorted(df_lanc["Ano"].dropna().unique().astype(int).tolist())
-    ano_filtro = col4.selectbox("Ano", anos)
+    ano_filtro = col4.selectbox("Ano", anos, key="flt_ano")
 
     meses = ["Todos"] + [meses_nomes[m] for m in range(1, 13)]
-    mes_filtro = col5.selectbox("Mês", meses)
+    mes_filtro = col5.selectbox("Mês", meses, key="flt_mes")
 
     # ----- APLICA FILTROS -----
     dfv = df_lanc.copy()
@@ -339,7 +342,7 @@ elif menu == "Lançamentos":
         fit_columns_on_grid_load=True,
         height=420,
         theme="balham",
-        key="grid_lancamentos"
+        key=f"grid_lancamentos_{st.session_state['grid_refresh']}"
     )
 
     # Data editada
@@ -362,8 +365,9 @@ elif menu == "Lançamentos":
 
     st.markdown(f"**Total de lançamentos exibidos: {len(dfv_display)}**")
 
-    col1, col2 = st.columns([1, 1])
-    with col1:
+    # ----- BOTÕES -----
+    col1b, col2b = st.columns([1, 1])
+    with col1b:
         if st.button("💾 Salvar alterações"):
             updated = 0
             for _, row in df_editado.iterrows():
@@ -378,14 +382,22 @@ elif menu == "Lançamentos":
                     pass
             conn.commit()
             st.success(f"{updated} lançamentos atualizados com sucesso!")
-            # força atualização dos filtros (inclusive "Nenhuma")
+
+            # força recarregar os dados e aplicar filtros de novo
+            if "df_lanc" in st.session_state:
+                del st.session_state["df_lanc"]
+            st.session_state["grid_refresh"] += 1
             st.rerun()
 
-    with col2:
+    with col2b:
         if st.button("🗑️ Excluir selecionados") and selected_ids:
             cursor.executemany("DELETE FROM transactions WHERE id=?", [(i,) for i in selected_ids])
             conn.commit()
             st.warning(f"{len(selected_ids)} lançamentos excluídos!")
+
+            if "df_lanc" in st.session_state:
+                del st.session_state["df_lanc"]
+            st.session_state["grid_refresh"] += 1
             st.rerun()
 # =====================
 # IMPORTAÇÃO
