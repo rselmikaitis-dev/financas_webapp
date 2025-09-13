@@ -243,20 +243,20 @@ if menu == "Dashboard":
                 ["📥 Entradas", "📤 Saídas", "📈 Evolução", "🏆 Top 10 Lançamentos"]
             )
 
-            # ===== Entradas por categoria =====
+            # ===== Entradas por subcategoria =====
             with tab1:
                 df_entradas = df_mes_valid[df_mes_valid["value"] > 0].copy()
                 if not df_entradas.empty:
-                    df_cat_e = df_entradas.groupby("categoria")["value"].sum().reset_index()
+                    df_cat_e = df_entradas.groupby("subcategoria")["value"].sum().reset_index()
                     df_cat_e = df_cat_e.sort_values("value", ascending=True)
 
                     fig_e = px.bar(
                         df_cat_e,
-                        x="value", y="categoria",
+                        x="value", y="subcategoria",
                         orientation="h",
-                        title="Entradas por Categoria",
+                        title="Entradas por Subcategoria",
                         text="value",
-                        color="categoria"
+                        color="subcategoria"
                     )
                     fig_e.update_traces(texttemplate="R$ %{x:,.2f}", textposition="outside")
                     st.plotly_chart(fig_e, use_container_width=True)
