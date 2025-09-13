@@ -240,7 +240,7 @@ if menu == "Dashboard":
 
             # --- ABAS ---
             tab1, tab2, tab3, tab4 = st.tabs(
-                ["📥 Entradas", "📤 Saídas", "📈 Evolução", "🏆 Top 10 Lançamentos"]
+                ["📥 Entradas", "📤 Saídas", "📈 Evolução", "🏆 Top 10 Gastos"]
             )
 
             # ===== Entradas por subcategoria =====
@@ -255,10 +255,11 @@ if menu == "Dashboard":
                         x="value", y="subcategoria",
                         orientation="h",
                         title="Entradas por Subcategoria",
-                        text="value",
-                        color="subcategoria"
+                        text="value"
                     )
-                    fig_e.update_traces(texttemplate="R$ %{x:,.2f}", textposition="outside")
+                    fig_e.update_traces(
+                        texttemplate="R$ %{x:,.2f}", textposition="outside", showlegend=False
+                    )
                     st.plotly_chart(fig_e, use_container_width=True)
                 else:
                     st.info("Não há entradas neste período.")
@@ -275,10 +276,11 @@ if menu == "Dashboard":
                         x="value", y="categoria",
                         orientation="h",
                         title="Saídas por Categoria",
-                        text="value",
-                        color="categoria"
+                        text="value"
                     )
-                    fig_s.update_traces(texttemplate="R$ %{x:,.2f}", textposition="outside")
+                    fig_s.update_traces(
+                        texttemplate="R$ %{x:,.2f}", textposition="outside", showlegend=False
+                    )
                     st.plotly_chart(fig_s, use_container_width=True)
                 else:
                     st.info("Não há saídas neste período.")
@@ -294,15 +296,19 @@ if menu == "Dashboard":
                     title="Evolução do Saldo no Mês",
                     markers=True
                 )
+                fig_l.update_traces(showlegend=False)
                 st.plotly_chart(fig_l, use_container_width=True)
 
-            # ===== Top 10 lançamentos =====
+            # ===== Top 10 gastos =====
             with tab4:
-                df_top = df_mes_valid.copy()
-                df_top["Data"] = df_top["date"].dt.strftime("%d/%m/%Y")
-                df_top = df_top[["Data", "description", "value", "categoria", "subcategoria", "account"]]
-                df_top = df_top.sort_values("value", key=abs, ascending=False).head(10)
-                st.dataframe(df_top, use_container_width=True)
+                df_top = df_mes_valid[df_mes_valid["value"] < 0].copy()
+                if not df_top.empty:
+                    df_top["Data"] = df_top["date"].dt.strftime("%d/%m/%Y")
+                    df_top = df_top[["Data", "description", "value", "categoria", "subcategoria", "account"]]
+                    df_top = df_top.sort_values("value").head(10)  # mais negativos = maiores gastos
+                    st.dataframe(df_top, use_container_width=True)
+                else:
+                    st.info("Não há gastos neste período.")
 # =====================
 # LANÇAMENTOS
 # =====================
