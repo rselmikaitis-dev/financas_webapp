@@ -374,101 +374,102 @@ elif menu == "Importação":
             st.rerun()
 
     else:
-        # Upload de novo arquivo se não houver rascunho
-        arquivo = st.file_uploader("Selecione o arquivo (CSV, XLSX ou XLS)", type=["csv", "xlsx", "xls"])
+        # Selecionar conta destino (sempre visível)
+        contas = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
+        if not contas:
+            st.error("Nenhuma conta cadastrada. Vá em Configurações → Contas.")
+        else:
+            conta_sel = st.selectbox("Selecione a conta destino", contas)
 
-        def _read_uploaded(file):
-            name = file.name.lower()
-            if name.endswith(".csv"):
-                return pd.read_csv(file, sep=None, engine="python", dtype=str)
-            if name.endswith(".xlsx"):
-                return pd.read_excel(file, engine="openpyxl", dtype=str)
-            if name.endswith(".xls"):
-                return pd.read_excel(file, engine="xlrd", dtype=str)
-            raise RuntimeError("Formato não suportado.")
+            # Upload de novo arquivo
+            arquivo = st.file_uploader("Selecione o arquivo (CSV, XLSX ou XLS)", type=["csv", "xlsx", "xls"])
 
-        if arquivo is not None:
-            try:
-                df = _read_uploaded(arquivo)
-                df.columns = [c.strip().lower().replace("\ufeff", "") for c in df.columns]
+            def _read_uploaded(file):
+                name = file.name.lower()
+                if name.endswith(".csv"):
+                    return pd.read_csv(file, sep=None, engine="python", dtype=str)
+                if name.endswith(".xlsx"):
+                    return pd.read_excel(file, engine="openpyxl", dtype=str)
+                if name.endswith(".xls"):
+                    return pd.read_excel(file, engine="xlrd", dtype=str)
+                raise RuntimeError("Formato não suportado.")
 
-                mapa_colunas = {
-                    "data": ["data","data lançamento","data lancamento","dt","lançamento","data mov","data movimento"],
-                    "descrição": ["descrição","descricao","historico","histórico","detalhe","descricao/historico","lançamento"],
-                    "valor": ["valor","valor (r$)","valor r$","vlr","amount","valorlancamento","valor lancamento"]
-                }
+            if arquivo is not None:
+                try:
+                    df = _read_uploaded(arquivo)
+                    df.columns = [c.strip().lower().replace("\ufeff", "") for c in df.columns]
 
-                col_map = {}
-                for alvo, poss in mapa_colunas.items():
-                    for p in poss:
-                        if p in df.columns:
-                            col_map[alvo] = p
-                            break
+                    mapa_colunas = {
+                        "data": ["data","data lançamento","data lancamento","dt","lançamento","data mov","data movimento"],
+                        "descrição": ["descrição","descricao","historico","histórico","detalhe","descricao/historico","lançamento"],
+                        "valor": ["valor","valor (r$)","valor r$","vlr","amount","valorlancamento","valor lancamento"]
+                    }
 
-                if "data" not in col_map or "valor" not in col_map:
-                    st.error(f"Arquivo inválido. Colunas lidas: {list(df.columns)}")
-                    st.stop()
+                    col_map = {}
+                    for alvo, poss in mapa_colunas.items():
+                        for p in poss:
+                            if p in df.columns:
+                                col_map[alvo] = p
+                                break
 
-                if "descrição" not in col_map:
-                    df["descrição"] = ""
-                    col_map["descrição"] = "descrição"
-
-                df = df.rename(columns={
-                    col_map["data"]: "Data",
-                    col_map["descrição"]: "Descrição",
-                    col_map["valor"]: "Valor"
-                })
-
-                # Limpar linhas de saldo
-                df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
-
-                # Conversões
-                df["Data"] = df["Data"].apply(parse_date)
-                df["Valor"] = df["Valor"].apply(parse_money)
-
-                # Selecionar conta (antes da inserção)
-                contas = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
-                if not contas:
-                    st.error("Nenhuma conta cadastrada. Vá em Configurações → Contas.")
-                    st.stop()
-                conta_sel = st.selectbox("Selecione a conta destino", contas)
-
-                # Se for cartão de crédito → perguntar mês/ano da fatura
-                mes_ref_cc, ano_ref_cc, dia_venc_cc = None, None, None
-                if conta_sel.lower().startswith("cartão de crédito"):
-                    cursor.execute("SELECT dia_vencimento FROM contas WHERE nome=?", (conta_sel,))
-                    row = cursor.fetchone()
-                    dia_venc_cc = row[0] if row and row[0] else 1
-                    st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: {dia_venc_cc}.")
-                    mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
-
-                # Inserir no banco como rascunho
-                inserted = 0
-                for _, row in df.iterrows():
-                    desc = str(row["Descrição"])
-                    val = parse_money(row["Valor"])
-                    if val is None:
-                        continue
-                    if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
-                        dia = min(dia_venc_cc, ultimo_dia_do_mes(ano_ref_cc, mes_ref_cc))
-                        dt_obj = date(ano_ref_cc, mes_ref_cc, dia)
-                        val = -val
+                    if "data" not in col_map or "valor" not in col_map:
+                        st.error(f"Arquivo inválido. Colunas lidas: {list(df.columns)}")
                     else:
-                        dt_obj = row["Data"] if isinstance(row["Data"], date) else parse_date(row["Data"])
-                    if not isinstance(dt_obj, date):
-                        continue
-                    cursor.execute("""
-                        INSERT INTO transactions (date, description, value, account, subcategoria_id, status)
-                        VALUES (?, ?, ?, ?, ?, 'rascunho')
-                    """, (dt_obj.strftime("%Y-%m-%d"), desc, val, conta_sel, None))
-                    inserted += 1
-                conn.commit()
+                        if "descrição" not in col_map:
+                            df["descrição"] = ""
+                            col_map["descrição"] = "descrição"
 
-                st.success(f"Arquivo carregado! {inserted} lançamentos adicionados como rascunho. Agora classifique-os.")
-                st.rerun()
+                        df = df.rename(columns={
+                            col_map["data"]: "Data",
+                            col_map["descrição"]: "Descrição",
+                            col_map["valor"]: "Valor"
+                        })
 
-            except Exception as e:
-                st.exception(e)
+                        # Limpar linhas de saldo
+                        df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
+
+                        # Conversões
+                        df["Data"] = df["Data"].apply(parse_date)
+                        df["Valor"] = df["Valor"].apply(parse_money)
+
+                        # Se for cartão de crédito → perguntar mês/ano da fatura
+                        mes_ref_cc, ano_ref_cc, dia_venc_cc = None, None, None
+                        if conta_sel.lower().startswith("cartão de crédito"):
+                            cursor.execute("SELECT dia_vencimento FROM contas WHERE nome=?", (conta_sel,))
+                            row = cursor.fetchone()
+                            dia_venc_cc = row[0] if row and row[0] else 1
+                            st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: {dia_venc_cc}.")
+                            mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
+
+                        # Inserir no banco como rascunho
+                        inserted = 0
+                        for _, row in df.iterrows():
+                            desc = str(row["Descrição"])
+                            val = parse_money(row["Valor"])
+                            if val is None:
+                                continue
+                            if conta_sel.lower().startswith("cartão de crédito") and mes_ref_cc and ano_ref_cc:
+                                from calendar import monthrange
+                                ultimo_dia = monthrange(ano_ref_cc, mes_ref_cc)[1]
+                                dia = min(dia_venc_cc, ultimo_dia)
+                                dt_obj = date(ano_ref_cc, mes_ref_cc, dia)
+                                val = -val
+                            else:
+                                dt_obj = row["Data"] if isinstance(row["Data"], date) else parse_date(row["Data"])
+                            if not isinstance(dt_obj, date):
+                                continue
+                            cursor.execute("""
+                                INSERT INTO transactions (date, description, value, account, subcategoria_id, status)
+                                VALUES (?, ?, ?, ?, ?, 'rascunho')
+                            """, (dt_obj.strftime("%Y-%m-%d"), desc, val, conta_sel, None))
+                            inserted += 1
+                        conn.commit()
+
+                        st.success(f"Arquivo carregado! {inserted} lançamentos adicionados como rascunho. Agora classifique-os.")
+                        st.rerun()
+
+                except Exception as e:
+                    st.error(f"Erro ao processar arquivo: {e}")
 # =====================
 # CONFIGURAÇÕES
 # =====================
