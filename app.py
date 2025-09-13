@@ -208,10 +208,10 @@ elif menu == "Lançamentos":
         SELECT t.id, t.date, t.description, t.value, t.account, t.subcategoria_id,
                COALESCE(c.nome || ' → ' || s.nome, 'Nenhuma') AS cat_sub
         FROM transactions t
-        LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
+        LEFT JOIN subcategororias s ON t.subcategoria_id = s.id
         LEFT JOIN categorias c ON s.categoria_id = c.id
         ORDER BY t.date DESC
-        """,
+        """.replace("subcategororias", "subcategorias"),  # safe fix de digitação
         conn
     )
 
@@ -287,14 +287,25 @@ elif menu == "Lançamentos":
         dfv_display,
         gridOptions=gb.build(),
         update_mode=GridUpdateMode.MODEL_CHANGED,
-        data_return_mode="AS_INPUT",
+        data_return_mode="AS_INPUT",  # evita dependência do enum
         fit_columns_on_grid_load=True,
         height=420,
         theme="balham",
         key="grid_lancamentos"
     )
+
+    # Data editada (sempre vem)
     df_editado = pd.DataFrame(grid["data"])
-    selected_ids = [r["ID"] for r in grid["selected_rows"]] if "selected_rows" in grid else []
+
+    # Selecionados: aceita list[dict] OU DataFrame
+    selected_ids = []
+    if "selected_rows" in grid:
+        sel_obj = grid["selected_rows"]
+        if isinstance(sel_obj, pd.DataFrame):
+            if "ID" in sel_obj.columns:
+                selected_ids = [int(x) for x in sel_obj["ID"].dropna().tolist()]
+        elif isinstance(sel_obj, list):
+            selected_ids = [int(r.get("ID")) for r in sel_obj if isinstance(r, dict) and r.get("ID") is not None]
 
     st.markdown(f"**Total de lançamentos exibidos: {len(dfv_display)}**")
 
@@ -309,9 +320,10 @@ elif menu == "Lançamentos":
             conn.commit()
             st.success(f"{updated} lançamentos atualizados com sucesso!")
             st.rerun()
+
     with col2:
         if st.button("🗑️ Excluir selecionados") and selected_ids:
-            cursor.executemany("DELETE FROM transactions WHERE id=?", [(int(i),) for i in selected_ids])
+            cursor.executemany("DELETE FROM transactions WHERE id=?", [(i,) for i in selected_ids])
             conn.commit()
             st.warning(f"{len(selected_ids)} lançamentos excluídos!")
             st.rerun()
