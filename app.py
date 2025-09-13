@@ -68,33 +68,11 @@ cursor.execute("""
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS categorias (
         id INTEGER PRIMARY KEY,
-        nome TEXT UNIQUE
+        nome TEXT UNIQUE,
+        tipo TEXT DEFAULT 'Despesa Variável'
     )
 """)
 
-# Garante que a categoria especial "Transferências" sempre exista
-cursor.execute(
-    "INSERT OR IGNORE INTO categorias (nome, tipo) VALUES (?, ?)",
-    ("Transferências", "Neutra")
-)
-conn.commit()
-# Garante a categoria especial "Transferências"
-cursor.execute(
-    "INSERT OR IGNORE INTO categorias (nome, tipo) VALUES (?, ?)",
-    ("Transferências", "Neutra")
-)
-conn.commit()
-
-# Busca o id da categoria Transferências
-cursor.execute("SELECT id FROM categorias WHERE nome='Transferências'")
-cat_id = cursor.fetchone()[0]
-
-# Cria subcategoria padrão se não existir
-cursor.execute(
-    "INSERT OR IGNORE INTO subcategorias (categoria_id, nome) VALUES (?, ?)",
-    (cat_id, "Entre contas")
-)
-conn.commit()
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS subcategorias (
         id INTEGER PRIMARY KEY,
@@ -113,18 +91,35 @@ cursor.execute("""
         value REAL,
         account TEXT,
         subcategoria_id INTEGER,
+        status TEXT DEFAULT 'final',
         FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
     )
 """)
 
 conn.commit()
 
-# Garantir que a coluna "tipo" existe em categorias (checar antes com PRAGMA)
+# Garante que a coluna "tipo" exista em categorias (retrocompatibilidade)
 cursor.execute("PRAGMA table_info(categorias)")
 cols = [c[1] for c in cursor.fetchall()]
 if "tipo" not in cols:
     cursor.execute("ALTER TABLE categorias ADD COLUMN tipo TEXT DEFAULT 'Despesa Variável'")
     conn.commit()
+
+# Garante categoria e subcategoria especiais para Transferências
+cursor.execute(
+    "INSERT OR IGNORE INTO categorias (nome, tipo) VALUES (?, ?)",
+    ("Transferências", "Neutra")
+)
+conn.commit()
+
+cursor.execute("SELECT id FROM categorias WHERE nome='Transferências'")
+cat_id = cursor.fetchone()[0]
+
+cursor.execute(
+    "INSERT OR IGNORE INTO subcategorias (categoria_id, nome) VALUES (?, ?)",
+    (cat_id, "Entre contas")
+)
+conn.commit()
 
 # =====================
 # HELPERS
