@@ -294,7 +294,7 @@ elif menu == "Lançamentos":
         key="grid_lancamentos"
     )
     df_editado = pd.DataFrame(grid["data"])
-    selected_ids = [r["ID"] for r in grid.get("selected_rows", [])]
+    selected_ids = [r["ID"] for r in grid["selected_rows"]] if "selected_rows" in grid else []
 
     st.markdown(f"**Total de lançamentos exibidos: {len(dfv_display)}**")
 
