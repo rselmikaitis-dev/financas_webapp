@@ -227,45 +227,82 @@ if menu == "Dashboard":
             entradas = df_mes_valid[df_mes_valid["value"] > 0]["value"].sum()
             saidas = df_mes_valid[df_mes_valid["value"] < 0]["value"].sum()
             saldo = entradas + saidas
+            economia_pct = (saldo / entradas * 100) if entradas > 0 else 0
 
-            c1, c2, c3 = st.columns(3)
+            # --- MÉTRICAS GERAIS ---
+            c1, c2, c3, c4 = st.columns(4)
             c1.metric("Entradas", f"R$ {entradas:,.2f}")
             c2.metric("Saídas", f"R$ {saidas:,.2f}")
             c3.metric("Saldo", f"R$ {saldo:,.2f}")
+            c4.metric("% Economia", f"{economia_pct:.1f}%")
 
             import plotly.express as px
 
-            # ===== Gráfico de pizza das entradas =====
-            df_entradas = df_mes_valid[df_mes_valid["value"] > 0].copy()
-            if not df_entradas.empty:
-                df_pizza_e = df_entradas.groupby("categoria")["value"].sum().reset_index()
-                df_pizza_e = df_pizza_e.sort_values("value", ascending=False)
+            # --- ABAS ---
+            tab1, tab2, tab3, tab4 = st.tabs(
+                ["📥 Entradas", "📤 Saídas", "📈 Evolução", "🏆 Top 10 Lançamentos"]
+            )
 
-                fig_e = px.pie(
-                    df_pizza_e,
-                    values="value",
-                    names="categoria",
-                    title="Distribuição das Entradas por Categoria"
+            # ===== Entradas por categoria =====
+            with tab1:
+                df_entradas = df_mes_valid[df_mes_valid["value"] > 0].copy()
+                if not df_entradas.empty:
+                    df_cat_e = df_entradas.groupby("categoria")["value"].sum().reset_index()
+                    df_cat_e = df_cat_e.sort_values("value", ascending=True)
+
+                    fig_e = px.bar(
+                        df_cat_e,
+                        x="value", y="categoria",
+                        orientation="h",
+                        title="Entradas por Categoria",
+                        text="value",
+                        color="categoria"
+                    )
+                    fig_e.update_traces(texttemplate="R$ %{x:,.2f}", textposition="outside")
+                    st.plotly_chart(fig_e, use_container_width=True)
+                else:
+                    st.info("Não há entradas neste período.")
+
+            # ===== Saídas por categoria =====
+            with tab2:
+                df_saidas = df_mes_valid[df_mes_valid["value"] < 0].copy()
+                if not df_saidas.empty:
+                    df_cat_s = df_saidas.groupby("categoria")["value"].sum().abs().reset_index()
+                    df_cat_s = df_cat_s.sort_values("value", ascending=True)
+
+                    fig_s = px.bar(
+                        df_cat_s,
+                        x="value", y="categoria",
+                        orientation="h",
+                        title="Saídas por Categoria",
+                        text="value",
+                        color="categoria"
+                    )
+                    fig_s.update_traces(texttemplate="R$ %{x:,.2f}", textposition="outside")
+                    st.plotly_chart(fig_s, use_container_width=True)
+                else:
+                    st.info("Não há saídas neste período.")
+
+            # ===== Evolução diária =====
+            with tab3:
+                df_diario = df_mes_valid.groupby("date")["value"].sum().cumsum().reset_index()
+                df_diario.columns = ["Data", "Saldo acumulado"]
+
+                fig_l = px.line(
+                    df_diario,
+                    x="Data", y="Saldo acumulado",
+                    title="Evolução do Saldo no Mês",
+                    markers=True
                 )
-                st.plotly_chart(fig_e, use_container_width=True)
-            else:
-                st.info("Não há entradas neste período para exibir gráfico.")
+                st.plotly_chart(fig_l, use_container_width=True)
 
-            # ===== Gráfico de pizza das saídas =====
-            df_saidas = df_mes_valid[df_mes_valid["value"] < 0].copy()
-            if not df_saidas.empty:
-                df_pizza_s = df_saidas.groupby("categoria")["value"].sum().reset_index()
-                df_pizza_s["value"] = df_pizza_s["value"].abs()  # valores positivos para pizza
-
-                fig_s = px.pie(
-                    df_pizza_s,
-                    values="value",
-                    names="categoria",
-                    title="Distribuição das Saídas por Categoria"
-                )
-                st.plotly_chart(fig_s, use_container_width=True)
-            else:
-                st.info("Não há saídas neste período para exibir gráfico.")
+            # ===== Top 10 lançamentos =====
+            with tab4:
+                df_top = df_mes_valid.copy()
+                df_top["Data"] = df_top["date"].dt.strftime("%d/%m/%Y")
+                df_top = df_top[["Data", "description", "value", "categoria", "subcategoria", "account"]]
+                df_top = df_top.sort_values("value", key=abs, ascending=False).head(10)
+                st.dataframe(df_top, use_container_width=True)
 # =====================
 # LANÇAMENTOS
 # =====================
