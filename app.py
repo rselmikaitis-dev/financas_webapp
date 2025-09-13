@@ -234,7 +234,7 @@ if menu == "Dashboard":
 elif menu == "Lançamentos":
     st.header("Lançamentos")
 
-    # Mapa categoria/subcategoria para editor do grid
+    # Mapa categoria/subcategoria
     cursor.execute("""
         SELECT s.id, s.nome, c.nome
         FROM subcategorias s
@@ -245,7 +245,7 @@ elif menu == "Lançamentos":
     for sid, s_nome, c_nome in cursor.fetchall():
         cat_sub_map[f"{c_nome} → {s_nome}"] = sid
 
-    # Carrega lançamentos com categoria e subcategoria separadas
+    # Carrega lançamentos
     df_lanc = pd.read_sql_query(
         """
         SELECT t.id, t.date, t.description, t.value, t.account, t.subcategoria_id,
@@ -259,7 +259,7 @@ elif menu == "Lançamentos":
         conn
     )
 
-    # Ajustes de colunas e datas
+    # Ajusta colunas
     df_lanc.rename(columns={
         "id": "ID",
         "date": "Data",
@@ -269,6 +269,7 @@ elif menu == "Lançamentos":
         "cat_sub": "Categoria/Subcategoria"
     }, inplace=True)
 
+    # Normaliza datas e categorias
     df_lanc["Data"] = pd.to_datetime(df_lanc["Data"], errors="coerce")
     df_lanc["Ano"] = df_lanc["Data"].dt.year
     df_lanc["Mês"] = df_lanc["Data"].dt.month
@@ -276,11 +277,12 @@ elif menu == "Lançamentos":
     df_lanc["Subcategoria"] = df_lanc["subcategoria"].fillna("Nenhuma")
 
     meses_nomes = {
-        1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",
-        7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"
+        1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+        5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+        9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
     }
 
-    # Filtros
+    # ----- FILTROS -----
     col1, col2, col3, col4, col5 = st.columns(5)
     contas = ["Todas"] + sorted(df_lanc["Conta"].dropna().unique().tolist())
     conta_filtro = col1.selectbox("Conta", contas)
@@ -290,7 +292,7 @@ elif menu == "Lançamentos":
 
     subs = ["Todas", "Nenhuma"]
     if cat_filtro not in ["Todas", "Nenhuma"]:
-        subs += sorted(df_lanc[df_lanc["Categoria"] == cat_filtro]["Subcategoria"].dropna().unique().tolist())
+        subs += sorted(df_lanc[df_lanc["Categoria"] == cat_filtro]["Subcategoria"].unique().tolist())
     elif cat_filtro == "Nenhuma":
         subs = ["Todas", "Nenhuma"]
     else:
@@ -303,7 +305,7 @@ elif menu == "Lançamentos":
     meses = ["Todos"] + [meses_nomes[m] for m in range(1, 13)]
     mes_filtro = col5.selectbox("Mês", meses)
 
-    # Aplica filtros
+    # ----- APLICA FILTROS -----
     dfv = df_lanc.copy()
     if conta_filtro != "Todas":
         dfv = dfv[dfv["Conta"] == conta_filtro]
@@ -317,7 +319,7 @@ elif menu == "Lançamentos":
         mes_num = [k for k, v in meses_nomes.items() if v == mes_filtro][0]
         dfv = dfv[dfv["Mês"] == mes_num]
 
-    # Grid
+    # ----- GRID -----
     dfv_display = dfv.copy()
     dfv_display["Data"] = dfv_display["Data"].dt.strftime("%d/%m/%Y")
     cols_order = ["ID", "Data", "Descrição", "Valor", "Conta", "Categoria/Subcategoria"]
@@ -340,6 +342,7 @@ elif menu == "Lançamentos":
         key="grid_lancamentos"
     )
 
+    # Data editada
     grid_data = grid.get("data", None)
     if isinstance(grid_data, list) and len(grid_data) > 0:
         df_editado = pd.DataFrame(grid_data)
@@ -359,8 +362,8 @@ elif menu == "Lançamentos":
 
     st.markdown(f"**Total de lançamentos exibidos: {len(dfv_display)}**")
 
-    col1b, col2b = st.columns([1, 1])
-    with col1b:
+    col1, col2 = st.columns([1, 1])
+    with col1:
         if st.button("💾 Salvar alterações"):
             updated = 0
             for _, row in df_editado.iterrows():
@@ -375,15 +378,15 @@ elif menu == "Lançamentos":
                     pass
             conn.commit()
             st.success(f"{updated} lançamentos atualizados com sucesso!")
-            st.rerun()
+            # força atualização dos filtros (inclusive "Nenhuma")
+            st.experimental_rerun()
 
-    with col2b:
+    with col2:
         if st.button("🗑️ Excluir selecionados") and selected_ids:
             cursor.executemany("DELETE FROM transactions WHERE id=?", [(i,) for i in selected_ids])
             conn.commit()
             st.warning(f"{len(selected_ids)} lançamentos excluídos!")
             st.rerun()
-
 # =====================
 # IMPORTAÇÃO
 # =====================
