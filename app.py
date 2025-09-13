@@ -78,7 +78,23 @@ cursor.execute(
     ("Transferências", "Neutra")
 )
 conn.commit()
+# Garante a categoria especial "Transferências"
+cursor.execute(
+    "INSERT OR IGNORE INTO categorias (nome, tipo) VALUES (?, ?)",
+    ("Transferências", "Neutra")
+)
+conn.commit()
 
+# Busca o id da categoria Transferências
+cursor.execute("SELECT id FROM categorias WHERE nome='Transferências'")
+cat_id = cursor.fetchone()[0]
+
+# Cria subcategoria padrão se não existir
+cursor.execute(
+    "INSERT OR IGNORE INTO subcategorias (categoria_id, nome) VALUES (?, ?)",
+    (cat_id, "Entre contas")
+)
+conn.commit()
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS subcategorias (
         id INTEGER PRIMARY KEY,
