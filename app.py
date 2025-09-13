@@ -180,14 +180,19 @@ if menu == "Dashboard":
     else:
         mes_sel, ano_sel = seletor_mes_ano("Dashboard", date.today())
         df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
-        df_mes = df_lanc[(df_lanc["date"].dt.month==mes_sel)&(df_lanc["date"].dt.year==ano_sel)]
+        df_mes = df_lanc[(df_lanc["date"].dt.month == mes_sel) & (df_lanc["date"].dt.year == ano_sel)]
+
         if df_mes.empty:
             st.warning("Nenhum lançamento neste período.")
         else:
-            entradas = df_mes[df_mes["value"]>0]["value"].sum()
-            saidas = df_mes[df_mes["value"]<0]["value"].sum()
-            saldo = entradas+saidas
-            c1,c2,c3 = st.columns(3)
+            # Ignora transferências no cálculo consolidado
+            df_mes_valid = df_mes[df_mes["categoria"] != "Transferências"]
+
+            entradas = df_mes_valid[df_mes_valid["value"] > 0]["value"].sum()
+            saidas = df_mes_valid[df_mes_valid["value"] < 0]["value"].sum()
+            saldo = entradas + saidas
+
+            c1, c2, c3 = st.columns(3)
             c1.metric("Entradas", f"R$ {entradas:,.2f}")
             c2.metric("Saídas", f"R$ {saidas:,.2f}")
             c3.metric("Saldo", f"R$ {saldo:,.2f}")
