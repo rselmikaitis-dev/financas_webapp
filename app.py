@@ -706,31 +706,33 @@ elif menu == "Configurações":
 
         st.markdown("---")
 
-        # Importar backup
+      # Importar backup
         st.markdown("### 📤 Restaurar Backup")
-        conn.close()
-        conn = sqlite3.connect("data.db", check_same_thread=False)
-        cursor = conn.cursor()
         uploaded_backup = st.file_uploader("Selecione o arquivo backup_financas.zip", type=["zip"])
+        
         if uploaded_backup is not None and st.button("Restaurar backup do arquivo"):
             import io, zipfile
             try:
+                # Fecha e reabre a conexão só no momento da restauração
+                conn.close()
+                conn = sqlite3.connect("data.db", check_same_thread=False)
+                cursor = conn.cursor()
+        
                 with zipfile.ZipFile(uploaded_backup, "r") as zf:
                     # Reset antes de restaurar
                     cursor.execute("DELETE FROM transactions")
                     cursor.execute("DELETE FROM subcategorias")
                     cursor.execute("DELETE FROM categorias")
                     cursor.execute("DELETE FROM contas")
-
-                    # Restaurar na ordem correta
+        
+                    # Restaurar na ordem correta preservando IDs
                     for tabela in ["contas", "categorias", "subcategorias", "transactions"]:
                         if f"{tabela}.csv" not in zf.namelist():
                             st.error(f"{tabela}.csv não encontrado no backup")
                             st.stop()
                         df = pd.read_csv(zf.open(f"{tabela}.csv"))
-                    
-                        # Se a tabela tem coluna "id", preserva os IDs originais
-                        if "id" in df.columns:
+        
+                        if "id" in df.columns:  # preserva IDs originais
                             cols = df.columns.tolist()
                             placeholders = ",".join(["?"] * len(cols))
                             colnames = ",".join(cols)
@@ -740,14 +742,13 @@ elif menu == "Configurações":
                             )
                         else:
                             df.to_sql(tabela, conn, if_exists="append", index=False)
-                    conn.commit()
+                conn.commit()
                 st.success("Backup restaurado com sucesso!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao restaurar backup: {e}")
-
+        
         st.markdown("---")
-
         # Reset total
         st.markdown("### ⚠️ Resetar Banco de Dados")
         confirm = st.checkbox("Confirmo que desejo apagar TODOS os dados")
