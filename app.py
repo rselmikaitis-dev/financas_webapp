@@ -52,7 +52,8 @@ with logout_col:
 # BANCO DE DADOS
 # =====================
 if "conn" not in st.session_state:
-    st.session_state.conn = sqlite3.connect("data.db", check_same_thread=False)
+    db_path = "data.db"  # sempre na raiz do projeto
+    st.session_state.conn = sqlite3.connect(db_path, check_same_thread=False)
 conn = st.session_state.conn
 cursor = conn.cursor()
 
