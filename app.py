@@ -956,3 +956,8 @@ elif menu == "Configurações":
                         st.rerun()
                     except sqlite3.IntegrityError:
                         st.error("Já existe essa subcategoria")
+
+            st.markdown("### 🔍 Debug Categorias")
+            if st.button("Mostrar categorias (debug)"):
+                df_debug = pd.read_sql_query("SELECT id, nome, tipo FROM categorias", conn)
+                st.dataframe(df_debug)
