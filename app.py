@@ -708,6 +708,9 @@ elif menu == "Configurações":
 
         # Importar backup
         st.markdown("### 📤 Restaurar Backup")
+        conn.close()
+        conn = sqlite3.connect("data.db", check_same_thread=False)
+        cursor = conn.cursor()
         uploaded_backup = st.file_uploader("Selecione o arquivo backup_financas.zip", type=["zip"])
         if uploaded_backup is not None and st.button("Restaurar backup do arquivo"):
             import io, zipfile
