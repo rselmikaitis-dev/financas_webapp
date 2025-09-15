@@ -302,77 +302,127 @@ if menu == "Dashboard":
            # ===== Dashboard Principal =====
             with tab5:
                 st.subheader("📊 Dashboard Principal")
-            
-                # === Função para gerar a tabela única ===
-                def gerar_tabela_completa(conn, df_lanc, ano_sel):
-                    # 🔹 Filtra os lançamentos pelo ano
-                    df_ano = df_lanc[df_lanc["Ano"] == ano_sel].copy()
-                    if df_ano.empty:
-                        return pd.DataFrame()
-            
-                    # 🔹 Garante colunas numéricas corretas
-                    df_ano["value"] = pd.to_numeric(df_ano["value"], errors="coerce").fillna(0)
-                    df_ano["Mês"] = pd.to_datetime(df_ano["date"], errors="coerce").dt.month
-            
-                    # 🔹 Tabela dinâmica: soma por Categoria/Subcategoria × Mês
-                    pivot = df_ano.pivot_table(
-                        index=["categoria", "subcategoria"],
-                        columns="Mês",
-                        values="value",
-                        aggfunc="sum",
-                        fill_value=0
-                    )
-            
-                    # 🔹 Total por linha
-                    pivot["Total"] = pivot.sum(axis=1)
-            
-                    # 🔹 Totais por categoria
-                    categorias_totais = pivot.groupby(level=0).sum()
-                    categorias_totais.index = pd.MultiIndex.from_tuples([(cat, "Total") for cat in categorias_totais.index])
-            
-                    # 🔹 Total geral
-                    total_geral = pd.DataFrame(pivot.sum()).T
-                    total_geral.index = pd.MultiIndex.from_tuples([("Total", "Total")])
-            
-                    # 🔹 Junta tudo
-                    tabela_final = pd.concat([pivot, categorias_totais, total_geral])
-            
-                    # 🔹 Ordena (categorias → subcategorias → total)
-                    tabela_final = tabela_final.sort_index(level=[0, 1])
-            
-                    # 🔹 Reseta índice para exibir no Streamlit
-                    tabela_final = tabela_final.reset_index()
-            
-                    # 🔹 Converte meses para nomes (Jan, Fev...)
-                    meses_map = {
-                        1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
-                        7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez"
-                    }
-                    tabela_final = tabela_final.rename(columns={m: meses_map.get(m, m) for m in tabela_final.columns if isinstance(m, int)})
-            
-                    return tabela_final
-            
-                # === Geração da tabela única ===
-                tabela_completa = gerar_tabela_completa(conn, df_lanc, ano_sel)
-                if tabela_completa is not None and not tabela_completa.empty:
-                    # Descobre o nome correto da coluna de subcategoria
-                    subcat_col = next((c for c in tabela_completa.columns if c.lower() == "subcategoria"), None)
                 
-                    if subcat_col:
-                        st.dataframe(
-                            tabela_completa.style.apply(
-                                lambda row: [
-                                    "font-weight: bold" if str(row[subcat_col]) == "Total" else "" 
-                                    for _ in row
-                                ],
-                                axis=1
-                            ),
-                            use_container_width=True
-                        )
+                # ---------- helpers ----------
+                def brl_fmt(v):
+                    """Formata em R$ pt-BR. Zeros viram 'R$ -'."""
+                    try:
+                        v = float(v)
+                    except Exception:
+                        return "R$ -"
+                    if abs(v) < 0.005:
+                        return "R$ -"
+                    s = f"{abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    prefix = "-R$ " if v < 0 else "R$ "
+                    return prefix + s
+                
+                def linhas_secao(titulo, tipo, total_receitas, df_mes_valid, conn, mostra_pct=False):
+                    """
+                    Monta linhas para uma seção:
+                      - 1 linha de título
+                      - todas as subcategorias (mesmo sem movimento)
+                      - 1 linha de Total
+                      - (opcional) 1 linha de % sobre Receitas
+                    Retorna (linhas:list[dict], total_da_secao:float)
+                    """
+                    linhas = [{"Item": titulo, "Valor": ""}]
+                
+                    # todas as subcategorias cadastradas daquele tipo
+                    sql_subs = """
+                        SELECT c.nome AS categoria, s.nome AS subcategoria
+                        FROM subcategorias s
+                        JOIN categorias c ON s.categoria_id = c.id
+                        WHERE c.tipo = ?
+                        ORDER BY c.nome, s.nome
+                    """
+                    all_subs = pd.read_sql_query(sql_subs, conn, params=(tipo,))
+                
+                    # soma dos lançamentos do mês para aquele tipo (excluindo Transferências já feito em df_mes_valid)
+                    df_tipo = df_mes_valid[df_mes_valid["tipo"] == tipo].copy()
+                    if df_tipo.empty:
+                        soma = pd.DataFrame(columns=["categoria", "subcategoria", "value"])
                     else:
-                        st.dataframe(tabela_completa, use_container_width=True)
-                else:
-                    st.info("Nenhum dado encontrado para este ano.")
+                        soma = (df_tipo
+                                .groupby(["categoria", "subcategoria"], dropna=False)["value"]
+                                .sum()
+                                .reset_index())
+                
+                    # garante todas as subcategorias
+                    merged = all_subs.merge(soma, on=["categoria", "subcategoria"], how="left").fillna({"value": 0.0})
+                
+                    # para despesas/investimentos mostramos valor absoluto
+                    is_receita = (tipo.lower() == "receita")
+                
+                    for _, r in merged.iterrows():
+                        val = r["value"] if is_receita else abs(r["value"])
+                        label = f"{r['categoria']} - {r['subcategoria']}"
+                        linhas.append({"Item": label, "Valor": brl_fmt(val)})
+                
+                    total_sec = merged["value"].sum()
+                    if not is_receita:
+                        total_sec = abs(total_sec)
+                
+                    titulo_base = titulo.split(" (")[0]  # remove "(20%)" etc para o texto do total
+                    linhas.append({"Item": f"Total de {titulo_base}", "Valor": brl_fmt(total_sec)})
+                
+                    if mostra_pct:
+                        pct = (total_sec / total_receitas * 100) if total_receitas > 0 else 0.0
+                        if "Investimentos" in titulo_base:
+                            pct_label = "% de Investimentos Realizado"
+                        else:
+                            pct_label = f"% de {titulo_base}"
+                        linhas.append({"Item": pct_label, "Valor": f"{pct:.0f}%"})
+                
+                    return linhas, float(total_sec)
+                
+                # ---------- dados base do mês ----------
+                # df_mes_valid já exclui Transferências acima
+                # calculamos total de Receitas (apenas tipo Receita)
+                df_receitas_mes = df_mes_valid[df_mes_valid["tipo"] == "Receita"].copy()
+                total_receitas = float(df_receitas_mes["value"].sum()) if not df_receitas_mes.empty else 0.0
+                
+                linhas_total = []
+                
+                # Seção: Receitas
+                lin, tot_rec = linhas_secao("Receitas", "Receita", total_receitas, df_mes_valid, conn, mostra_pct=False)
+                linhas_total += lin
+                
+                # Seção: Investimentos (20%)
+                lin, tot_inv = linhas_secao("Investimentos (20%)", "Investimento", total_receitas, df_mes_valid, conn, mostra_pct=True)
+                linhas_total += lin
+                
+                # Seção: Despesas Fixas (50%)
+                lin, tot_fix = linhas_secao("Despesas Fixas (50%)", "Despesa Fixa", total_receitas, df_mes_valid, conn, mostra_pct=True)
+                linhas_total += lin
+                
+                # Seção: Despesas Variáveis (30%)
+                lin, tot_var = linhas_secao("Despesas Variáveis (30%)", "Despesa Variável", total_receitas, df_mes_valid, conn, mostra_pct=True)
+                linhas_total += lin
+                
+                # Saldo do mês = receitas - (inv + fixas + variáveis)
+                saldo_mes = total_receitas - (tot_inv + tot_fix + tot_var)
+                linhas_total.append({"Item": "Saldo do Mês", "Valor": brl_fmt(saldo_mes)})
+                
+                # ---------- dataframe e estilo ----------
+                relatorio_df = pd.DataFrame(linhas_total, columns=["Item", "Valor"])
+                
+                def estilo_linhas(row):
+                    item = str(row["Item"])
+                    titulos = {
+                        "Receitas",
+                        "Investimentos (20%)",
+                        "Despesas Fixas (50%)",
+                        "Despesas Variáveis (30%)",
+                        "Saldo do Mês",
+                    }
+                    if item in titulos or item.startswith("Total de ") or item.startswith("% de "):
+                        return ["font-weight: 700"] * 2
+                    return [""] * 2
+                
+                st.dataframe(
+                    relatorio_df.style.apply(estilo_linhas, axis=1),
+                    use_container_width=True
+                )
 # =====================
 # LANÇAMENTOS
 # =====================
