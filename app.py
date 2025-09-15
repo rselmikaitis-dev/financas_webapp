@@ -212,6 +212,8 @@ if menu == "Dashboard":
     else:
         mes_sel, ano_sel = seletor_mes_ano("Dashboard", date.today())
         df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
+        df_lanc["Ano"] = df_lanc["date"].dt.year
+        df_lanc["Mês"] = df_lanc["date"].dt.month
 
         df_mes = df_lanc[
             (df_lanc["date"].dt.month == mes_sel) &
@@ -239,8 +241,8 @@ if menu == "Dashboard":
             import plotly.express as px
 
             # --- ABAS ---
-            tab1, tab2, tab3, tab4 = st.tabs(
-                ["📥 Entradas", "📤 Saídas", "📈 Evolução", "🏆 Top 10 Gastos"]
+            tab1, tab2, tab3, tab4, tab5 = st.tabs(
+                ["📥 Entradas", "📤 Saídas", "📈 Evolução", "🏆 Top 10 Gastos", "📊 Dashboard Principal"]
             )
 
             # ===== Entradas por subcategoria =====
@@ -305,10 +307,47 @@ if menu == "Dashboard":
                 if not df_top.empty:
                     df_top["Data"] = df_top["date"].dt.strftime("%d/%m/%Y")
                     df_top = df_top[["Data", "description", "value", "categoria", "subcategoria", "account"]]
-                    df_top = df_top.sort_values("value").head(10)  # mais negativos = maiores gastos
+                    df_top = df_top.sort_values("value").head(10)
+                    df_top["value"] = df_top["value"].apply(lambda x: f"R$ {x:,.2f}")
                     st.dataframe(df_top, use_container_width=True)
                 else:
                     st.info("Não há gastos neste período.")
+
+            # ===== Dashboard Principal =====
+            with tab5:
+                st.subheader("📊 Dashboard Principal - Receitas")
+                df_receitas = df_lanc[
+                    (df_lanc["Ano"] == ano_sel) & (df_lanc["value"] > 0) & (df_lanc["categoria"] != "Transferências")
+                ].copy()
+
+                if not df_receitas.empty:
+                    # Pivot: linhas = Receitas/Subcategorias, colunas = Meses
+                    df_receitas["Mês Nome"] = df_receitas["Mês"].map({
+                        1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr",
+                        5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago",
+                        9: "Set", 10: "Out", 11: "Nov", 12: "Dez"
+                    })
+
+                    pivot = df_receitas.pivot_table(
+                        index="subcategoria",
+                        columns="Mês Nome",
+                        values="value",
+                        aggfunc="sum",
+                        fill_value=0
+                    ).reset_index()
+
+                    # Adiciona linha total de receitas
+                    total = pivot.drop(columns=["subcategoria"]).sum().to_frame().T
+                    total.insert(0, "subcategoria", "Receitas (Total)")
+                    pivot = pd.concat([total, pivot], ignore_index=True)
+
+                    # Formata valores em R$
+                    for col in pivot.columns[1:]:
+                        pivot[col] = pivot[col].apply(lambda x: f"R$ {x:,.2f}")
+
+                    st.dataframe(pivot, use_container_width=True)
+                else:
+                    st.info("Não há receitas neste ano.")
 # =====================
 # LANÇAMENTOS
 # =====================
