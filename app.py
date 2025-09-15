@@ -190,11 +190,11 @@ with st.sidebar:
 # =====================
 if menu == "Dashboard":
     st.header("Dashboard Financeiro")
-# =====================
-# DEBUG DO BANCO
-# =====================
-cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-st.write("📋 Tabelas encontradas no banco:", cursor.fetchall())
+    # =====================
+    # DEBUG DO BANCO
+    # =====================
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    st.write("📋 Tabelas encontradas no banco:", cursor.fetchall())
 
 for tabela in ["transactions", "categorias", "subcategorias", "contas"]:
     try:
