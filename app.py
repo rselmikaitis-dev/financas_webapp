@@ -315,7 +315,7 @@ if menu == "Dashboard":
 
             # ===== Dashboard Principal =====
             with tab5:
-                st.subheader("📊 Dashboard Principal - Receitas")
+                # ===== Receitas =====
                 df_receitas = df_lanc[
                     (df_lanc["Ano"] == ano_sel) & 
                     (df_lanc["value"] > 0) & 
@@ -337,18 +337,24 @@ if menu == "Dashboard":
                         fill_value=0
                     ).reset_index()
             
+                    # Total vai pro final
                     total = pivot.drop(columns=["subcategoria"]).sum().to_frame().T
                     total.insert(0, "subcategoria", "Receitas (Total)")
-                    pivot = pd.concat([total, pivot], ignore_index=True)
             
+                    # Linha título
+                    titulo = pd.DataFrame([{"subcategoria": "=== Receitas ==="}])
+            
+                    pivot = pd.concat([titulo, pivot, total], ignore_index=True)
+            
+                    # Formatação em R$
                     for col in pivot.columns[1:]:
-                        pivot[col] = pivot[col].apply(lambda x: f"R$ {x:,.2f}")
+                        pivot[col] = pivot[col].apply(lambda x: f"R$ {x:,.2f}" if pd.notna(x) and x != "" else "")
             
                     st.dataframe(pivot, use_container_width=True)
                 else:
                     st.info("Não há receitas neste ano.")
             
-                st.subheader("📊 Dashboard Principal - Investimentos")
+                # ===== Investimentos =====
                 df_invest = df_lanc[
                     (df_lanc["Ano"] == ano_sel) & 
                     (df_lanc["categoria"] == "Investimento")
@@ -371,10 +377,13 @@ if menu == "Dashboard":
             
                     total_inv = pivot_inv.drop(columns=["subcategoria"]).sum().to_frame().T
                     total_inv.insert(0, "subcategoria", "Investimentos (Total)")
-                    pivot_inv = pd.concat([total_inv, pivot_inv], ignore_index=True)
+            
+                    titulo_inv = pd.DataFrame([{"subcategoria": "=== Investimentos ==="}])
+            
+                    pivot_inv = pd.concat([titulo_inv, pivot_inv, total_inv], ignore_index=True)
             
                     for col in pivot_inv.columns[1:]:
-                        pivot_inv[col] = pivot_inv[col].apply(lambda x: f"R$ {x:,.2f}")
+                        pivot_inv[col] = pivot_inv[col].apply(lambda x: f"R$ {x:,.2f}" if pd.notna(x) and x != "" else "")
             
                     st.dataframe(pivot_inv, use_container_width=True)
                 else:
