@@ -728,91 +728,91 @@ elif menu == "Configurações":
             st.download_button("⬇️ Clique aqui para baixar backup.zip", buffer, file_name="backup_financas.zip")
 
         st.markdown("---")
-            # Importar backup
-st.markdown("### 📤 Restaurar Backup")
-uploaded_backup = st.file_uploader("Selecione o arquivo backup_financas.zip", type=["zip"])
-
-if uploaded_backup is not None and st.button("Restaurar backup do arquivo"):
-    import io, zipfile, os
-    try:
-        # Fecha conexão atual e remove o arquivo antigo
-        try:
-            conn.close()
-        except:
-            pass
-        if os.path.exists("data.db"):
-            os.remove("data.db")
-
-        # Recria o banco
-        conn = sqlite3.connect("data.db", check_same_thread=False)
-        st.session_state.conn = conn
-        cursor = conn.cursor()
-
-        # Recria as tabelas (mesma estrutura usada no início do app)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS contas (
-                id INTEGER PRIMARY KEY,
-                nome TEXT UNIQUE,
-                dia_vencimento INTEGER
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS categorias (
-                id INTEGER PRIMARY KEY,
-                nome TEXT UNIQUE,
-                tipo TEXT DEFAULT 'Despesa Variável'
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS subcategorias (
-                id INTEGER PRIMARY KEY,
-                categoria_id INTEGER,
-                nome TEXT,
-                UNIQUE(categoria_id, nome),
-                FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE CASCADE
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS transactions (
-                id INTEGER PRIMARY KEY,
-                date TEXT,
-                description TEXT,
-                value REAL,
-                account TEXT,
-                subcategoria_id INTEGER,
-                status TEXT DEFAULT 'final',
-                FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
-            )
-        """)
-        conn.commit()
-
-        # Restaura a partir do backup
-        with zipfile.ZipFile(uploaded_backup, "r") as zf:
-            for tabela in ["contas", "categorias", "subcategorias", "transactions"]:
-                if f"{tabela}.csv" not in zf.namelist():
-                    st.error(f"{tabela}.csv não encontrado no backup")
-                    st.stop()
-                df = pd.read_csv(zf.open(f"{tabela}.csv"))
-
-                # Preserva IDs originais se existirem
-                if "id" in df.columns:
-                    cols = df.columns.tolist()
-                    placeholders = ",".join(["?"] * len(cols))
-                    colnames = ",".join(cols)
-                    cursor.executemany(
-                        f"INSERT INTO {tabela} ({colnames}) VALUES ({placeholders})",
-                        df.itertuples(index=False, name=None)
-                    )
-                else:
-                    df.to_sql(tabela, conn, if_exists="append", index=False)
-
-            conn.commit()
-
-        st.success("✅ Backup restaurado com sucesso! IDs preservados e integridade garantida.")
-        st.rerun()
-
-    except Exception as e:
-        st.error(f"Erro ao restaurar backup: {e}")
+                        # Importar backup
+            st.markdown("### 📤 Restaurar Backup")
+            uploaded_backup = st.file_uploader("Selecione o arquivo backup_financas.zip", type=["zip"])
+            
+            if uploaded_backup is not None and st.button("Restaurar backup do arquivo"):
+                import io, zipfile, os
+                try:
+                    # Fecha conexão atual e remove o arquivo antigo
+                    try:
+                        conn.close()
+                    except:
+                        pass
+                    if os.path.exists("data.db"):
+                        os.remove("data.db")
+            
+                    # Recria o banco
+                    conn = sqlite3.connect("data.db", check_same_thread=False)
+                    st.session_state.conn = conn
+                    cursor = conn.cursor()
+            
+                    # Recria as tabelas (mesma estrutura usada no início do app)
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS contas (
+                            id INTEGER PRIMARY KEY,
+                            nome TEXT UNIQUE,
+                            dia_vencimento INTEGER
+                        )
+                    """)
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS categorias (
+                            id INTEGER PRIMARY KEY,
+                            nome TEXT UNIQUE,
+                            tipo TEXT DEFAULT 'Despesa Variável'
+                        )
+                    """)
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS subcategorias (
+                            id INTEGER PRIMARY KEY,
+                            categoria_id INTEGER,
+                            nome TEXT,
+                            UNIQUE(categoria_id, nome),
+                            FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE CASCADE
+                        )
+                    """)
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS transactions (
+                            id INTEGER PRIMARY KEY,
+                            date TEXT,
+                            description TEXT,
+                            value REAL,
+                            account TEXT,
+                            subcategoria_id INTEGER,
+                            status TEXT DEFAULT 'final',
+                            FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
+                        )
+                    """)
+                    conn.commit()
+            
+                    # Restaura a partir do backup
+                    with zipfile.ZipFile(uploaded_backup, "r") as zf:
+                        for tabela in ["contas", "categorias", "subcategorias", "transactions"]:
+                            if f"{tabela}.csv" not in zf.namelist():
+                                st.error(f"{tabela}.csv não encontrado no backup")
+                                st.stop()
+                            df = pd.read_csv(zf.open(f"{tabela}.csv"))
+            
+                            # Preserva IDs originais se existirem
+                            if "id" in df.columns:
+                                cols = df.columns.tolist()
+                                placeholders = ",".join(["?"] * len(cols))
+                                colnames = ",".join(cols)
+                                cursor.executemany(
+                                    f"INSERT INTO {tabela} ({colnames}) VALUES ({placeholders})",
+                                    df.itertuples(index=False, name=None)
+                                )
+                            else:
+                                df.to_sql(tabela, conn, if_exists="append", index=False)
+            
+                        conn.commit()
+            
+                    st.success("✅ Backup restaurado com sucesso! IDs preservados e integridade garantida.")
+                    st.rerun()
+            
+                except Exception as e:
+                    st.error(f"Erro ao restaurar backup: {e}")
 
     # ---- CONTAS ----
     with tab2:
