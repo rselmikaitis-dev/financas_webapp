@@ -728,8 +728,7 @@ elif menu == "Configurações":
             st.download_button("⬇️ Clique aqui para baixar backup.zip", buffer, file_name="backup_financas.zip")
 
         st.markdown("---")
-
-    # Importar backup
+            # Importar backup
 st.markdown("### 📤 Restaurar Backup")
 uploaded_backup = st.file_uploader("Selecione o arquivo backup_financas.zip", type=["zip"])
 
@@ -814,6 +813,7 @@ if uploaded_backup is not None and st.button("Restaurar backup do arquivo"):
 
     except Exception as e:
         st.error(f"Erro ao restaurar backup: {e}")
+
     # ---- CONTAS ----
     with tab2:
         st.subheader("Gerenciar Contas")
