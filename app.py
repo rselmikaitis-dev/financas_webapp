@@ -1,7 +1,6 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from db import init_db
-from pages import dashboard, lancamentos, importacao, configuracoes
 
 st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="wide")
 
