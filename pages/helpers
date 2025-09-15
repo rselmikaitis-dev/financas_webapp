@@ -2,33 +2,52 @@ import re
 import pandas as pd
 from datetime import date, datetime, timedelta
 
+# --- Conversores ---
 def parse_money(val) -> float | None:
-    if pd.isna(val): return None
+    """Converte valores monetários para float (padrão brasileiro ou americano)."""
+    if pd.isna(val):
+        return None
     s = str(val).strip()
     s = re.sub(r"[^\d,.-]", "", s)
-    if "," in s: s = s.replace(".", "").replace(",", ".")
-    if s.endswith("-"): s = "-" + s[:-1]
-    if s in ("", "-", "+", "."): return None
-    try: return float(s)
-    except: return None
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    if s.endswith("-"):
+        s = "-" + s[:-1]
+    if s in ("", "-", "+", "."):
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
 
 def parse_date(val):
-    if pd.isna(val): return pd.NaT
+    """Converte datas em vários formatos para datetime.date."""
+    if pd.isna(val):
+        return pd.NaT
     s = str(val).strip()
     for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
-        try: return datetime.strptime(s, fmt).date()
-        except: continue
+        try:
+            return datetime.strptime(s, fmt).date()
+        except Exception:
+            continue
     try:
         x = pd.to_datetime(s, dayfirst=True, errors="coerce")
         return x.date() if not pd.isna(x) else pd.NaT
-    except: return pd.NaT
+    except Exception:
+        return pd.NaT
 
 def ultimo_dia_do_mes(ano: int, mes: int) -> int:
-    if mes == 12: return 31
+    """Retorna o último dia de um mês."""
+    if mes == 12:
+        return 31
     return (date(ano, mes + 1, 1) - timedelta(days=1)).day
 
-def seletor_mes_ano(st, label="Período", data_default=None):
-    if data_default is None: data_default = date.today()
+# --- UI ---
+import streamlit as st
+def seletor_mes_ano(label="Período", data_default=None):
+    """Mostra 2 selectboxes (ano/mês) para escolha do período."""
+    if data_default is None:
+        data_default = date.today()
     anos = list(range(2020, datetime.today().year + 2))
     meses = {
         1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",
@@ -42,3 +61,10 @@ def seletor_mes_ano(st, label="Período", data_default=None):
                                format_func=lambda x: meses[x],
                                index=data_default.month-1)
     return mes_sel, ano_sel
+
+# --- Extras ---
+def is_cartao_credito(nome_conta: str) -> bool:
+    """Detecta se o nome da conta é cartão de crédito (ignora acentos/maiúsculas)."""
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(nome_conta)).encode("ASCII", "ignore").decode().lower().strip()
+    return s.startswith("cartao de credito")
