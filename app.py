@@ -179,25 +179,61 @@ def is_cartao_credito(nome_conta: str) -> bool:
     s = unicodedata.normalize("NFKD", str(nome_conta)).encode("ASCII", "ignore").decode().lower().strip()
     return s.startswith("cartao de credito")
 
-from rapidfuzz import fuzz, process
+# === Auto-classificação por similaridade (opcional) ===
+# Requer: rapidfuzz (adicione em requirements.txt)
+try:
+    from rapidfuzz import process, fuzz
+except Exception:
+    process = fuzz = None  # roda sem quebrar caso não esteja instalado
 
-def classificar_por_similaridade(descricao, historico, limiar=85):
+import unicodedata as _ud
+import re as _re
+
+def _normalize_desc(s: str) -> str:
+    s = str(s or "").lower().strip()
+    s = _ud.normalize("NFKD", s).encode("ascii", "ignore").decode()
+    s = _re.sub(r"\s+", " ", s)
+    return s
+
+def _build_hist_similaridade(conn):
     """
-    Busca a categoria/subcategoria mais parecida com base no histórico.
-    historico: lista de tuplas (descricao, categoria_id, subcategoria_id)
+    Retorna um dicionário com 'choices' (descrições normalizadas) e 'payloads' (sub_id, label).
+    Usa apenas lançamentos que JÁ têm subcategoria.
     """
-    if not historico:
-        return None, None
-    
-    choices = [h[0] for h in historico]  # só descrições
-    best_match = process.extractOne(descricao, choices, scorer=fuzz.token_sort_ratio)
-    
-    if best_match:
-        match_desc, score, idx = best_match
-        if score >= limiar:
-            _, cat_id, sub_id = historico[idx]
-            return cat_id, sub_id
-    return None, None
+    if process is None:
+        return None
+    q = """
+        SELECT t.description, s.id AS sub_id, (c.nome || ' → ' || s.nome) AS label
+        FROM transactions t
+        JOIN subcategorias s ON t.subcategoria_id = s.id
+        JOIN categorias    c ON s.categoria_id   = c.id
+        WHERE t.subcategoria_id IS NOT NULL AND t.description IS NOT NULL
+    """
+    dfh = pd.read_sql_query(q, conn)
+    if dfh.empty:
+        return None
+    dfh["desc_norm"] = dfh["description"].map(_normalize_desc)
+    dfh = dfh.drop_duplicates(subset=["desc_norm", "sub_id"])  # acelera e desruide repetições
+    return {
+        "choices": dfh["desc_norm"].tolist(),
+        "payloads": dfh[["sub_id", "label"]].to_dict(orient="records")
+    }
+
+def sugerir_subcategoria(descricao: str, hist: dict, limiar: int = 85):
+    """
+    Retorna (sub_id_aplicavel, label_sugerida, score_int).
+    sub_id_aplicavel vira None se a confiança < limiar (ou se não tiver rapidfuzz).
+    """
+    if not hist or process is None:
+        return None, None, 0
+    desc_norm = _normalize_desc(descricao)
+    match = process.extractOne(desc_norm, hist["choices"], scorer=fuzz.token_set_ratio)
+    if not match:
+        return None, None, 0
+    _, score, idx = match
+    payload = hist["payloads"][idx]
+    sub_id = payload["sub_id"] if score >= limiar else None
+    return sub_id, payload["label"], int(score)
 
 # =====================
 # MENU
