@@ -891,11 +891,14 @@ elif menu == "Importação":
                             if not isinstance(dt_obj, date):
                                 continue
                     
-                            # <<< NOVO: define subcategoria sugerida (opcional)
-                            sub_id_to_insert = None
-                            if aplicar_auto:
-                                # usa limiar escolhido na UI; se score < limiar, já vem None
-                                sub_id_to_insert, _, _ = sugerir_subcategoria(desc, hist_sim, limiar=limiar)
+                         # <<< NOVO: define subcategoria sugerida (opcional)
+                        sub_id_to_insert = None
+                        if aplicar_auto:
+                            # Ajusta limiar se for cartão de crédito
+                            limiar_ajustado = limiar
+                            if is_cartao_credito(conta_sel):
+                                limiar_ajustado = min(limiar, 70)  # nunca mais que 70 para cartão
+                            sub_id_to_insert, _, _ = sugerir_subcategoria(desc, hist_sim, limiar=limiar_ajustado)
                     
                             cursor.execute("""
                                 INSERT INTO transactions (date, description, value, account, subcategoria_id, status)
