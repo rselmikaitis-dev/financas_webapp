@@ -53,55 +53,6 @@ import os
 # =====================
 # BANCO DE DADOS
 # =====================
-if "conn" not in st.session_state or st.session_state.conn is None:
-    if not os.path.exists("data.db"):
-        # cria um banco vazio na primeira vez
-        conn = sqlite3.connect("data.db", check_same_thread=False)
-        cursor = conn.cursor()
-        # recria as tabelas básicas
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS contas (
-                id INTEGER PRIMARY KEY,
-                nome TEXT UNIQUE,
-                dia_vencimento INTEGER
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS categorias (
-                id INTEGER PRIMARY KEY,
-                nome TEXT UNIQUE,
-                tipo TEXT DEFAULT 'Despesa Variável'
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS subcategorias (
-                id INTEGER PRIMARY KEY,
-                categoria_id INTEGER,
-                nome TEXT,
-                UNIQUE(categoria_id, nome),
-                FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE CASCADE
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS transactions (
-                id INTEGER PRIMARY KEY,
-                date TEXT,
-                description TEXT,
-                value REAL,
-                account TEXT,
-                subcategoria_id INTEGER,
-                status TEXT DEFAULT 'final',
-                FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
-            )
-        """)
-        conn.commit()
-    else:
-        conn = sqlite3.connect("data.db", check_same_thread=False)
-
-    st.session_state.conn = conn
-
-
-
 def garantir_schema(conn):
     cursor = conn.cursor()
     cursor.execute("""
@@ -140,9 +91,19 @@ def garantir_schema(conn):
         )
     """)
     conn.commit()
-cursor = conn.cursor()
-conn = st.session_state.conn
+
+# 🔹 Cria conexão única
+if "conn" not in st.session_state or st.session_state.conn is None:
+    conn = sqlite3.connect("data.db", check_same_thread=False)
+    st.session_state.conn = conn
+else:
+    conn = st.session_state.conn
+
+# 🔹 Garante que tabelas existam sempre
 garantir_schema(conn)
+
+# 🔹 Cursor pronto
+cursor = conn.cursor()
 # =====================
 # HELPERS
 # =====================
