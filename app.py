@@ -786,18 +786,18 @@ elif menu == "Configurações":
             except Exception as e:
                 st.error(f"Erro ao restaurar backup: {e}")
         
-        st.markdown("---")
-        # Reset total
-        # Reset antes de restaurar (ordem importa!)
-            try:
-                cursor.execute("PRAGMA foreign_keys = OFF")  # desativa constraints temporariamente
-                for tabela in ["transactions", "subcategorias", "categorias", "contas"]:
-                    cursor.execute(f"DELETE FROM {tabela}")
-                conn.commit()
-                cursor.execute("PRAGMA foreign_keys = ON")
-            except Exception as e:
-                st.error(f"Erro ao limpar tabelas: {e}")
-                st.stop()
+            st.markdown("---")
+            # Reset total
+            # Reset antes de restaurar (ordem importa!)
+                try:
+                    cursor.execute("PRAGMA foreign_keys = OFF")  # desativa constraints temporariamente
+                    for tabela in ["transactions", "subcategorias", "categorias", "contas"]:
+                        cursor.execute(f"DELETE FROM {tabela}")
+                    conn.commit()
+                    cursor.execute("PRAGMA foreign_keys = ON")
+                except Exception as e:
+                    st.error(f"Erro ao limpar tabelas: {e}")
+                    st.stop()
     # ---- CONTAS ----
     with tab2:
         st.subheader("Gerenciar Contas")
