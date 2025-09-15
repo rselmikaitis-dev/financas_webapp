@@ -183,7 +183,7 @@ def is_cartao_credito(nome_conta: str) -> bool:
 # MENU
 # =====================
 with st.sidebar:
-    menu = option_menu("Menu", ["Dashboard", "Lançamentos", "Importação", "Configurações"],
+    menu = option_menu("Menu", ["Dashboard", "Dashboard Principal", "Lançamentos", "Importação", "Configurações"],
                        menu_icon=None, icons=["","","",""], default_index=0)
 
 # =====================
@@ -423,6 +423,117 @@ if menu == "Dashboard":
                     relatorio_df.style.apply(estilo_linhas, axis=1),
                     use_container_width=True
                 )
+
+# =====================
+# DASHBOARD PRINCIPAL
+# =====================
+elif menu == "Dashboard Principal":
+    st.header("📊 Dashboard Principal")
+
+    df_lanc = read_table_transactions(conn)
+
+    if df_lanc.empty:
+        st.info("Nenhum lançamento encontrado.")
+    else:
+        mes_sel, ano_sel = seletor_mes_ano("Período", date.today())
+        df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
+        df_lanc["Ano"] = df_lanc["date"].dt.year
+        df_lanc["Mês"] = df_lanc["date"].dt.month
+
+        df_mes = df_lanc[
+            (df_lanc["Mês"] == mes_sel) &
+            (df_lanc["Ano"] == ano_sel)
+        ]
+
+        if df_mes.empty:
+            st.warning("Nenhum lançamento neste período.")
+        else:
+            # Ignora transferências
+            df_mes_valid = df_mes[df_mes["categoria"] != "Transferências"].copy()
+
+            # ==== Relatório vertical ====
+            def brl_fmt(v):
+                try:
+                    v = float(v)
+                except Exception:
+                    return "R$ -"
+                if abs(v) < 0.005:
+                    return "R$ -"
+                s = f"{abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                prefix = "-R$ " if v < 0 else "R$ "
+                return prefix + s
+
+            def linhas_secao(titulo, tipo, total_receitas, df_mes_valid, conn, mostra_pct=False):
+                linhas = [{"Item": titulo, "Valor": ""}]
+                sql_subs = """
+                    SELECT c.nome AS categoria, s.nome AS subcategoria
+                    FROM subcategorias s
+                    JOIN categorias c ON s.categoria_id = c.id
+                    WHERE c.tipo = ?
+                    ORDER BY c.nome, s.nome
+                """
+                all_subs = pd.read_sql_query(sql_subs, conn, params=(tipo,))
+                df_tipo = df_mes_valid[df_mes_valid["tipo"] == tipo].copy()
+                if df_tipo.empty:
+                    soma = pd.DataFrame(columns=["categoria", "subcategoria", "value"])
+                else:
+                    soma = df_tipo.groupby(["categoria", "subcategoria"], dropna=False)["value"].sum().reset_index()
+                merged = all_subs.merge(soma, on=["categoria", "subcategoria"], how="left").fillna({"value": 0.0})
+                is_receita = (tipo.lower() == "receita")
+                for _, r in merged.iterrows():
+                    val = r["value"] if is_receita else abs(r["value"])
+                    label = f"{r['categoria']} - {r['subcategoria']}"
+                    linhas.append({"Item": label, "Valor": brl_fmt(val)})
+                total_sec = merged["value"].sum()
+                if not is_receita:
+                    total_sec = abs(total_sec)
+                titulo_base = titulo.split(" (")[0]
+                linhas.append({"Item": f"Total de {titulo_base}", "Valor": brl_fmt(total_sec)})
+                if mostra_pct:
+                    pct = (total_sec / total_receitas * 100) if total_receitas > 0 else 0.0
+                    if "Investimentos" in titulo_base:
+                        pct_label = "% de Investimentos Realizado"
+                    else:
+                        pct_label = f"% de {titulo_base}"
+                    linhas.append({"Item": pct_label, "Valor": f"{pct:.0f}%"})
+                return linhas, float(total_sec)
+
+            # base
+            df_receitas_mes = df_mes_valid[df_mes_valid["tipo"] == "Receita"].copy()
+            total_receitas = float(df_receitas_mes["value"].sum()) if not df_receitas_mes.empty else 0.0
+            linhas_total = []
+            lin, tot_rec = linhas_secao("Receitas", "Receita", total_receitas, df_mes_valid, conn)
+            linhas_total += lin
+            lin, tot_inv = linhas_secao("Investimentos (20%)", "Investimento", total_receitas, df_mes_valid, conn, mostra_pct=True)
+            linhas_total += lin
+            lin, tot_fix = linhas_secao("Despesas Fixas (50%)", "Despesa Fixa", total_receitas, df_mes_valid, conn, mostra_pct=True)
+            linhas_total += lin
+            lin, tot_var = linhas_secao("Despesas Variáveis (30%)", "Despesa Variável", total_receitas, df_mes_valid, conn, mostra_pct=True)
+            linhas_total += lin
+
+            saldo_mes = total_receitas - (tot_inv + tot_fix + tot_var)
+            linhas_total.append({"Item": "Saldo do Mês", "Valor": brl_fmt(saldo_mes)})
+
+            relatorio_df = pd.DataFrame(linhas_total, columns=["Item", "Valor"])
+
+            def estilo_linhas(row):
+                item = str(row["Item"])
+                titulos = {
+                    "Receitas",
+                    "Investimentos (20%)",
+                    "Despesas Fixas (50%)",
+                    "Despesas Variáveis (30%)",
+                    "Saldo do Mês",
+                }
+                if item in titulos or item.startswith("Total de ") or item.startswith("% de "):
+                    return ["font-weight: 700"] * 2
+                return [""] * 2
+
+            st.dataframe(
+                relatorio_df.style.apply(estilo_linhas, axis=1),
+                use_container_width=True
+            )
+
 # =====================
 # LANÇAMENTOS
 # =====================
