@@ -53,6 +53,7 @@ with logout_col:
 # =====================
 if "conn" not in st.session_state:
     st.session_state.conn = sqlite3.connect(db_path, check_same_thread=False)
+
 conn = st.session_state.conn
 cursor = conn.cursor()
 
