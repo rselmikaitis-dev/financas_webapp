@@ -1,9 +1,11 @@
 import sqlite3
 
 def init_db():
+    """Inicializa o banco SQLite e garante tabelas básicas."""
     conn = sqlite3.connect("data.db", check_same_thread=False)
     cursor = conn.cursor()
 
+    # Criação de tabelas
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS contas (
             id INTEGER PRIMARY KEY,
@@ -11,6 +13,7 @@ def init_db():
             dia_vencimento INTEGER
         )
     """)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS categorias (
             id INTEGER PRIMARY KEY,
@@ -18,6 +21,7 @@ def init_db():
             tipo TEXT DEFAULT 'Despesa Variável'
         )
     """)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS subcategorias (
             id INTEGER PRIMARY KEY,
@@ -27,6 +31,7 @@ def init_db():
             FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE CASCADE
         )
     """)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY,
@@ -39,20 +44,25 @@ def init_db():
             FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
         )
     """)
+
     conn.commit()
 
-    # Categoria Transferências
+    # Garante categoria especial "Transferências"
     cursor.execute(
         "INSERT OR IGNORE INTO categorias (nome, tipo) VALUES (?, ?)",
         ("Transferências", "Neutra")
     )
     conn.commit()
+
+    # Cria subcategoria "Entre contas" dentro de Transferências
     cursor.execute("SELECT id FROM categorias WHERE nome='Transferências'")
-    cat_id = cursor.fetchone()[0]
-    cursor.execute(
-        "INSERT OR IGNORE INTO subcategorias (categoria_id, nome) VALUES (?, ?)",
-        (cat_id, "Entre contas")
-    )
-    conn.commit()
+    row = cursor.fetchone()
+    if row:
+        cat_id = row[0]
+        cursor.execute(
+            "INSERT OR IGNORE INTO subcategorias (categoria_id, nome) VALUES (?, ?)",
+            (cat_id, "Entre contas")
+        )
+        conn.commit()
 
     return conn, cursor
