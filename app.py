@@ -351,6 +351,18 @@ if menu == "Dashboard":
                     tabela_final = tabela_final.rename(columns={m: meses_map.get(m, m) for m in tabela_final.columns if isinstance(m, int)})
                 
                     return tabela_final
+
+                # === Geração da tabela única ===
+                    tabela_completa = gerar_tabela_completa(conn, df_lanc, ano_sel)
+                    
+                    # Exibir com Totais em negrito
+                    st.dataframe(
+                        tabela_completa.style.apply(
+                            lambda x: ["font-weight: bold" if x["subcategoria"] == "Total" else "" for _ in x],
+                            axis=1
+                        ),
+                        use_container_width=True
+                    )
                 
                 # Exibir com Totais em negrito
                 st.dataframe(
