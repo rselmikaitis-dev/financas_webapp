@@ -374,23 +374,20 @@ elif menu == "Lançamentos":
     for sid, s_nome, c_nome in cursor.fetchall():
         cat_sub_map[f"{c_nome} → {s_nome}"] = sid
 
-    # ----- CARREGAMENTO DE LANÇAMENTOS -----
-    if "df_lanc" not in st.session_state:
-        st.session_state["df_lanc"] = pd.read_sql_query(
-            """
-            SELECT t.id, t.date, t.description, t.value, t.account, t.subcategoria_id,
-                   c.nome AS categoria, s.nome AS subcategoria,
-                   COALESCE(c.nome || ' → ' || s.nome, 'Nenhuma') AS cat_sub
-            FROM transactions t
-            LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
-            LEFT JOIN categorias c ON s.categoria_id = c.id
-            ORDER BY t.date DESC
-            """,
-            conn
-        )
-
+   # ----- CARREGAMENTO DE LANÇAMENTOS -----
+    st.session_state["df_lanc"] = pd.read_sql_query(
+        """
+        SELECT t.id, t.date, t.description, t.value, t.account, t.subcategoria_id,
+               c.nome AS categoria, s.nome AS subcategoria,
+               COALESCE(c.nome || ' → ' || s.nome, 'Nenhuma') AS cat_sub
+        FROM transactions t
+        LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
+        LEFT JOIN categorias c ON s.categoria_id = c.id
+        ORDER BY t.date DESC
+        """,
+        conn
+    )
     df_lanc = st.session_state["df_lanc"].copy()
-
     # Ajusta colunas
     df_lanc.rename(columns={
         "id": "ID",
