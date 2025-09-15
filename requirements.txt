@@ -1,7 +1,20 @@
-streamlit
-pandas
-openpyxl
-bcrypt
-streamlit-option-menu
-streamlit-aggrid
-plotly
+# Framework principal
+streamlit>=1.35.0
+
+# Banco de dados
+pandas>=2.0.0
+openpyxl>=3.1.0     # leitura de Excel .xlsx
+xlrd>=2.0.1         # leitura de Excel .xls
+sqlite3-binary      # compatibilidade em alguns ambientes
+
+# Interface do grid editável
+streamlit-aggrid>=0.3.4
+
+# Menu lateral bonito
+streamlit-option-menu>=0.3.6
+
+# Segurança (login com hash de senha)
+bcrypt>=4.0.1
+
+# Visualização de gráficos
+plotly>=5.20.0
