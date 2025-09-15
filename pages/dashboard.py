@@ -1,3 +1,5 @@
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import streamlit as st
 import pandas as pd
 from helpers import seletor_mes_ano
