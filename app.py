@@ -835,6 +835,26 @@ elif menu == "Importação":
                     df["Data"] = df["Data"].apply(parse_date)
                     df["Valor"] = df["Valor"].apply(parse_money)
 
+                    # <<< NOVO: carrega histórico e configura UI de sugestão
+                    hist_sim = _build_hist_similaridade(conn)
+                    limiar = st.slider(
+                        "Limiar p/ auto-classificação por similaridade", 60, 100, 85, 1,
+                        help="Compara a descrição com lançamentos já classificados (RapidFuzz)."
+                    )
+                    aplicar_auto = st.checkbox(
+                        "Aplicar classificação automática na importação (quando confiança ≥ limiar)",
+                        value=True,
+                        help="Se desmarcar, as sugestões só aparecem na prévia."
+                    )
+                    
+                    # <<< NOVO: gera colunas de sugestão para a PRÉVIA (não altera seu DF base)
+                    sug_labels, sug_scores, sug_subids = [], [], []
+                    for desc in df["Descrição"].fillna(""):
+                        sid, label, score = sugerir_subcategoria(desc, hist_sim, limiar=0)  # mostra score real
+                        sug_labels.append(label or "")
+                        sug_scores.append(int(score or 0))
+                        sug_subids.append(sid if (sid is not None) else None)
+
                     # Prévia
                     df_preview = df.copy()
                     df_preview["Conta destino"] = conta_sel
