@@ -167,7 +167,7 @@ def seletor_mes_ano(label="Período", data_default=None):
 def read_table_transactions(conn):
     return pd.read_sql_query("""
         SELECT t.id, t.date, t.description, t.value, t.account,
-               c.nome as categoria, s.nome as subcategoria
+               c.nome as categoria, s.nome as subcategoria, c.tipo
         FROM transactions t
         LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
         LEFT JOIN categorias   c ON s.categoria_id   = c.id
