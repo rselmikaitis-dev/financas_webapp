@@ -788,16 +788,16 @@ elif menu == "Configurações":
         
         st.markdown("---")
         # Reset total
-        st.markdown("### ⚠️ Resetar Banco de Dados")
-        confirm = st.checkbox("Confirmo que desejo apagar TODOS os dados")
-        if st.button("Apagar tudo e começar do zero", type="primary", disabled=not confirm):
-            cursor.execute("DELETE FROM transactions")
-            cursor.execute("DELETE FROM subcategorias")
-            cursor.execute("DELETE FROM categorias")
-            cursor.execute("DELETE FROM contas")
-            conn.commit()
-            st.success("Todos os dados foram apagados!")
-
+        # Reset antes de restaurar (ordem importa!)
+            try:
+                cursor.execute("PRAGMA foreign_keys = OFF")  # desativa constraints temporariamente
+                for tabela in ["transactions", "subcategorias", "categorias", "contas"]:
+                    cursor.execute(f"DELETE FROM {tabela}")
+                conn.commit()
+                cursor.execute("PRAGMA foreign_keys = ON")
+            except Exception as e:
+                st.error(f"Erro ao limpar tabelas: {e}")
+                st.stop()
     # ---- CONTAS ----
     with tab2:
         st.subheader("Gerenciar Contas")
