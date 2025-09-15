@@ -190,6 +190,18 @@ with st.sidebar:
 # =====================
 if menu == "Dashboard":
     st.header("Dashboard Financeiro")
+# =====================
+# DEBUG DO BANCO
+# =====================
+cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+st.write("📋 Tabelas encontradas no banco:", cursor.fetchall())
+
+for tabela in ["transactions", "categorias", "subcategorias", "contas"]:
+    try:
+        cursor.execute(f"PRAGMA table_info({tabela})")
+        st.write(f"📋 Estrutura de {tabela}:", cursor.fetchall())
+    except Exception as e:
+        st.write(f"⚠️ Erro ao acessar {tabela}: {e}")
     df_lanc = read_table_transactions(conn)
 
     if df_lanc.empty:
