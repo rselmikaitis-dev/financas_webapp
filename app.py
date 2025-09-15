@@ -101,6 +101,8 @@ if "conn" not in st.session_state or st.session_state.conn is None:
     st.session_state.conn = conn
 
 conn = st.session_state.conn
+garantir_schema(conn)
+
 def garantir_schema(conn):
     cursor = conn.cursor()
     cursor.execute("""
