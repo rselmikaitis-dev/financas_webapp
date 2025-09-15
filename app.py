@@ -299,21 +299,21 @@ if menu == "Dashboard":
                 else:
                     st.info("Não há gastos neste período.")
 
-            # ===== Dashboard Principal =====
+           # ===== Dashboard Principal =====
             with tab5:
                 st.subheader("📊 Dashboard Principal")
-                
-               # === Função para gerar a tabela única ===
+            
+                # === Função para gerar a tabela única ===
                 def gerar_tabela_completa(conn, df_lanc, ano_sel):
                     # 🔹 Filtra os lançamentos pelo ano
                     df_ano = df_lanc[df_lanc["Ano"] == ano_sel].copy()
                     if df_ano.empty:
-                        return pd.DataFrame([{"categoria": "Nenhuma", "subcategoria": "Total"}])
-                
+                        return pd.DataFrame()
+            
                     # 🔹 Garante colunas numéricas corretas
                     df_ano["value"] = pd.to_numeric(df_ano["value"], errors="coerce").fillna(0)
                     df_ano["Mês"] = pd.to_datetime(df_ano["date"], errors="coerce").dt.month
-                
+            
                     # 🔹 Tabela dinâmica: soma por Categoria/Subcategoria × Mês
                     pivot = df_ano.pivot_table(
                         index=["categoria", "subcategoria"],
@@ -322,40 +322,40 @@ if menu == "Dashboard":
                         aggfunc="sum",
                         fill_value=0
                     )
-                
+            
                     # 🔹 Total por linha
                     pivot["Total"] = pivot.sum(axis=1)
-                
+            
                     # 🔹 Totais por categoria
                     categorias_totais = pivot.groupby(level=0).sum()
                     categorias_totais.index = pd.MultiIndex.from_tuples([(cat, "Total") for cat in categorias_totais.index])
-                
+            
                     # 🔹 Total geral
                     total_geral = pd.DataFrame(pivot.sum()).T
                     total_geral.index = pd.MultiIndex.from_tuples([("Total", "Total")])
-                
+            
                     # 🔹 Junta tudo
                     tabela_final = pd.concat([pivot, categorias_totais, total_geral])
-                
+            
                     # 🔹 Ordena (categorias → subcategorias → total)
                     tabela_final = tabela_final.sort_index(level=[0, 1])
-                
+            
                     # 🔹 Reseta índice para exibir no Streamlit
                     tabela_final = tabela_final.reset_index()
-                
+            
                     # 🔹 Converte meses para nomes (Jan, Fev...)
                     meses_map = {
                         1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
                         7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez"
                     }
                     tabela_final = tabela_final.rename(columns={m: meses_map.get(m, m) for m in tabela_final.columns if isinstance(m, int)})
-                
+            
                     return tabela_final
-
+            
                 # === Geração da tabela única ===
-                    tabela_completa = gerar_tabela_completa(conn, df_lanc, ano_sel)
-                    
-                    # Exibir com Totais em negrito
+                tabela_completa = gerar_tabela_completa(conn, df_lanc, ano_sel)
+            
+                if tabela_completa is not None and not tabela_completa.empty:
                     st.dataframe(
                         tabela_completa.style.apply(
                             lambda x: ["font-weight: bold" if x["subcategoria"] == "Total" else "" for _ in x],
@@ -363,50 +363,8 @@ if menu == "Dashboard":
                         ),
                         use_container_width=True
                     )
-                
-                # Exibir com Totais em negrito
-                st.dataframe(
-                    tabela_completa.style.apply(
-                        lambda x: ["font-weight: bold" if x["subcategoria"] == "Total" else "" for _ in x],
-                        axis=1
-                    ),
-                    use_container_width=True
-                )
-                            
-                # ===== Investimentos =====
-                df_invest = df_lanc[
-                    (df_lanc["Ano"] == ano_sel) & 
-                    (df_lanc["categoria"] == "Investimentos")
-                ].copy()
-            
-                if not df_invest.empty:
-                    df_invest["Mês Nome"] = df_invest["Mês"].map({
-                        1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr",
-                        5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago",
-                        9: "Set", 10: "Out", 11: "Nov", 12: "Dez"
-                    })
-            
-                    pivot_inv = df_invest.pivot_table(
-                        index="subcategoria",
-                        columns="Mês Nome",
-                        values="value",
-                        aggfunc="sum",
-                        fill_value=0
-                    ).reset_index()
-            
-                    total_inv = pivot_inv.drop(columns=["subcategoria"]).sum().to_frame().T
-                    total_inv.insert(0, "subcategoria", "Investimentos (Total)")
-            
-                    titulo_inv = pd.DataFrame([{"subcategoria": "=== Investimentos ==="}])
-            
-                    pivot_inv = pd.concat([titulo_inv, pivot_inv, total_inv], ignore_index=True)
-            
-                    for col in pivot_inv.columns[1:]:
-                        pivot_inv[col] = pivot_inv[col].apply(lambda x: f"R$ {x:,.2f}" if pd.notna(x) and x != "" else "")
-            
-                    st.dataframe(pivot_inv, use_container_width=True)
                 else:
-                    st.info("Não há investimentos neste ano.")
+                    st.info("Nenhum dado encontrado para este ano.")
 # =====================
 # LANÇAMENTOS
 # =====================
