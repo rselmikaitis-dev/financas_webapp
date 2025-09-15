@@ -100,8 +100,7 @@ if "conn" not in st.session_state or st.session_state.conn is None:
 
     st.session_state.conn = conn
 
-conn = st.session_state.conn
-garantir_schema(conn)
+
 
 def garantir_schema(conn):
     cursor = conn.cursor()
@@ -142,7 +141,8 @@ def garantir_schema(conn):
     """)
     conn.commit()
 cursor = conn.cursor()
-
+conn = st.session_state.conn
+garantir_schema(conn)
 # =====================
 # HELPERS
 # =====================
