@@ -317,17 +317,18 @@ if menu == "Dashboard":
             with tab5:
                 st.subheader("📊 Dashboard Principal - Receitas")
                 df_receitas = df_lanc[
-                    (df_lanc["Ano"] == ano_sel) & (df_lanc["value"] > 0) & (df_lanc["categoria"] != "Transferências")
+                    (df_lanc["Ano"] == ano_sel) & 
+                    (df_lanc["value"] > 0) & 
+                    (df_lanc["categoria"] != "Transferências")
                 ].copy()
-
+            
                 if not df_receitas.empty:
-                    # Pivot: linhas = Receitas/Subcategorias, colunas = Meses
                     df_receitas["Mês Nome"] = df_receitas["Mês"].map({
                         1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr",
                         5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago",
                         9: "Set", 10: "Out", 11: "Nov", 12: "Dez"
                     })
-
+            
                     pivot = df_receitas.pivot_table(
                         index="subcategoria",
                         columns="Mês Nome",
@@ -335,19 +336,49 @@ if menu == "Dashboard":
                         aggfunc="sum",
                         fill_value=0
                     ).reset_index()
-
-                    # Adiciona linha total de receitas
+            
                     total = pivot.drop(columns=["subcategoria"]).sum().to_frame().T
                     total.insert(0, "subcategoria", "Receitas (Total)")
                     pivot = pd.concat([total, pivot], ignore_index=True)
-
-                    # Formata valores em R$
+            
                     for col in pivot.columns[1:]:
                         pivot[col] = pivot[col].apply(lambda x: f"R$ {x:,.2f}")
-
+            
                     st.dataframe(pivot, use_container_width=True)
                 else:
                     st.info("Não há receitas neste ano.")
+            
+                st.subheader("📊 Dashboard Principal - Investimentos")
+                df_invest = df_lanc[
+                    (df_lanc["Ano"] == ano_sel) & 
+                    (df_lanc["categoria"] == "Investimento")
+                ].copy()
+            
+                if not df_invest.empty:
+                    df_invest["Mês Nome"] = df_invest["Mês"].map({
+                        1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr",
+                        5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago",
+                        9: "Set", 10: "Out", 11: "Nov", 12: "Dez"
+                    })
+            
+                    pivot_inv = df_invest.pivot_table(
+                        index="subcategoria",
+                        columns="Mês Nome",
+                        values="value",
+                        aggfunc="sum",
+                        fill_value=0
+                    ).reset_index()
+            
+                    total_inv = pivot_inv.drop(columns=["subcategoria"]).sum().to_frame().T
+                    total_inv.insert(0, "subcategoria", "Investimentos (Total)")
+                    pivot_inv = pd.concat([total_inv, pivot_inv], ignore_index=True)
+            
+                    for col in pivot_inv.columns[1:]:
+                        pivot_inv[col] = pivot_inv[col].apply(lambda x: f"R$ {x:,.2f}")
+            
+                    st.dataframe(pivot_inv, use_container_width=True)
+                else:
+                    st.info("Não há investimentos neste ano.")
 # =====================
 # LANÇAMENTOS
 # =====================
