@@ -706,18 +706,13 @@ elif menu == "Configurações":
 
         st.markdown("---")
 
-      # Importar backup
+        # Importar backup
         st.markdown("### 📤 Restaurar Backup")
         uploaded_backup = st.file_uploader("Selecione o arquivo backup_financas.zip", type=["zip"])
         
         if uploaded_backup is not None and st.button("Restaurar backup do arquivo"):
             import io, zipfile
             try:
-                # Fecha e reabre a conexão só no momento da restauração
-                conn.close()
-                conn = sqlite3.connect("data.db", check_same_thread=False)
-                cursor = conn.cursor()
-        
                 with zipfile.ZipFile(uploaded_backup, "r") as zf:
                     # Reset antes de restaurar
                     cursor.execute("DELETE FROM transactions")
@@ -742,6 +737,7 @@ elif menu == "Configurações":
                             )
                         else:
                             df.to_sql(tabela, conn, if_exists="append", index=False)
+        
                 conn.commit()
                 st.success("Backup restaurado com sucesso!")
                 st.rerun()
