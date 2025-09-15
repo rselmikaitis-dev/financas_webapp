@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
+from ..helpers import alguma_funcao
 
 def show(conn):
     st.header("Configurações")
