@@ -48,76 +48,60 @@ with logout_col:
         st.session_state.clear()
         st.rerun()
 
+import os
+
 # =====================
 # BANCO DE DADOS
 # =====================
-if "conn" not in st.session_state:
-    st.session_state.conn = sqlite3.connect(db_path, check_same_thread=False)
+if "conn" not in st.session_state or st.session_state.conn is None:
+    if not os.path.exists("data.db"):
+        # cria um banco vazio na primeira vez
+        conn = sqlite3.connect("data.db", check_same_thread=False)
+        cursor = conn.cursor()
+        # recria as tabelas básicas
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS contas (
+                id INTEGER PRIMARY KEY,
+                nome TEXT UNIQUE,
+                dia_vencimento INTEGER
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS categorias (
+                id INTEGER PRIMARY KEY,
+                nome TEXT UNIQUE,
+                tipo TEXT DEFAULT 'Despesa Variável'
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS subcategorias (
+                id INTEGER PRIMARY KEY,
+                categoria_id INTEGER,
+                nome TEXT,
+                UNIQUE(categoria_id, nome),
+                FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY,
+                date TEXT,
+                description TEXT,
+                value REAL,
+                account TEXT,
+                subcategoria_id INTEGER,
+                status TEXT DEFAULT 'final',
+                FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
+            )
+        """)
+        conn.commit()
+    else:
+        conn = sqlite3.connect("data.db", check_same_thread=False)
+
+    st.session_state.conn = conn
 
 conn = st.session_state.conn
 cursor = conn.cursor()
-
-# Criação das tabelas base
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS contas (
-        id INTEGER PRIMARY KEY,
-        nome TEXT UNIQUE,
-        dia_vencimento INTEGER
-    )
-""")
-
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS categorias (
-        id INTEGER PRIMARY KEY,
-        nome TEXT UNIQUE
-        -- coluna tipo será garantida abaixo (retrocompatibilidade)
-    )
-""")
-
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS subcategorias (
-        id INTEGER PRIMARY KEY,
-        categoria_id INTEGER,
-        nome TEXT,
-        UNIQUE(categoria_id, nome),
-        FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE CASCADE
-    )
-""")
-
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS transactions (
-        id INTEGER PRIMARY KEY,
-        date TEXT,
-        description TEXT,
-        value REAL,
-        account TEXT,
-        subcategoria_id INTEGER,
-        status TEXT DEFAULT 'final',
-        FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
-    )
-""")
-conn.commit()
-
-# Garante coluna "tipo" em categorias (retrocompatível com bases antigas)
-cursor.execute("PRAGMA table_info(categorias)")
-cols = [c[1] for c in cursor.fetchall()]
-if "tipo" not in cols:
-    cursor.execute("ALTER TABLE categorias ADD COLUMN tipo TEXT DEFAULT 'Despesa Variável'")
-    conn.commit()
-
-# Garante categoria Transferências e subcategoria Entre contas
-cursor.execute(
-    "INSERT OR IGNORE INTO categorias (nome, tipo) VALUES (?, ?)",
-    ("Transferências", "Neutra")
-)
-conn.commit()
-cursor.execute("SELECT id FROM categorias WHERE nome='Transferências'")
-cat_id = cursor.fetchone()[0]
-cursor.execute(
-    "INSERT OR IGNORE INTO subcategorias (categoria_id, nome) VALUES (?, ?)",
-    (cat_id, "Entre contas")
-)
-conn.commit()
 
 # =====================
 # HELPERS
