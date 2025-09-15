@@ -355,14 +355,23 @@ if menu == "Dashboard":
                 # === Geração da tabela única ===
                 tabela_completa = gerar_tabela_completa(conn, df_lanc, ano_sel)
             
-                if tabela_completa is not None and not tabela_completa.empty:
-                    st.dataframe(
-                        tabela_completa.style.apply(
-                            lambda x: ["font-weight: bold" if x["subcategoria"] == "Total" else "" for _ in x],
-                            axis=1
-                        ),
-                        use_container_width=True
-                    )
+               if tabela_completa is not None and not tabela_completa.empty:
+                    # Descobre o nome correto da coluna de subcategoria
+                    subcat_col = next((c for c in tabela_completa.columns if c.lower() == "subcategoria"), None)
+                
+                    if subcat_col:
+                        st.dataframe(
+                            tabela_completa.style.apply(
+                                lambda row: [
+                                    "font-weight: bold" if str(row[subcat_col]) == "Total" else "" 
+                                    for _ in row
+                                ],
+                                axis=1
+                            ),
+                            use_container_width=True
+                        )
+                    else:
+                        st.dataframe(tabela_completa, use_container_width=True)
                 else:
                     st.info("Nenhum dado encontrado para este ano.")
 # =====================
