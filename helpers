@@ -1,1 +1,44 @@
+import re
+import pandas as pd
+from datetime import date, datetime, timedelta
 
+def parse_money(val) -> float | None:
+    if pd.isna(val): return None
+    s = str(val).strip()
+    s = re.sub(r"[^\d,.-]", "", s)
+    if "," in s: s = s.replace(".", "").replace(",", ".")
+    if s.endswith("-"): s = "-" + s[:-1]
+    if s in ("", "-", "+", "."): return None
+    try: return float(s)
+    except: return None
+
+def parse_date(val):
+    if pd.isna(val): return pd.NaT
+    s = str(val).strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        try: return datetime.strptime(s, fmt).date()
+        except: continue
+    try:
+        x = pd.to_datetime(s, dayfirst=True, errors="coerce")
+        return x.date() if not pd.isna(x) else pd.NaT
+    except: return pd.NaT
+
+def ultimo_dia_do_mes(ano: int, mes: int) -> int:
+    if mes == 12: return 31
+    return (date(ano, mes + 1, 1) - timedelta(days=1)).day
+
+def seletor_mes_ano(st, label="Período", data_default=None):
+    if data_default is None: data_default = date.today()
+    anos = list(range(2020, datetime.today().year + 2))
+    meses = {
+        1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",
+        7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"
+    }
+    col1, col2 = st.columns(2)
+    with col1:
+        ano_sel = st.selectbox(f"{label} - Ano", anos, index=anos.index(data_default.year))
+    with col2:
+        mes_sel = st.selectbox(f"{label} - Mês", list(meses.keys()),
+                               format_func=lambda x: meses[x],
+                               index=data_default.month-1)
+    return mes_sel, ano_sel
