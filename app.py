@@ -745,7 +745,7 @@ elif menu == "Configurações":
 
         st.markdown("---")
 
-        # Importar backup
+                # Importar backup
         st.markdown("### 📤 Restaurar Backup")
         uploaded_backup = st.file_uploader("Selecione o arquivo backup_financas.zip", type=["zip"])
         
@@ -758,15 +758,18 @@ elif menu == "Configurações":
                     cursor.execute("DELETE FROM subcategorias")
                     cursor.execute("DELETE FROM categorias")
                     cursor.execute("DELETE FROM contas")
+                    conn.commit()
         
-                    # Restaurar na ordem correta preservando IDs
+                    # Restaurar na ordem correta para manter integridade
                     for tabela in ["contas", "categorias", "subcategorias", "transactions"]:
                         if f"{tabela}.csv" not in zf.namelist():
                             st.error(f"{tabela}.csv não encontrado no backup")
                             st.stop()
+        
                         df = pd.read_csv(zf.open(f"{tabela}.csv"))
         
-                        if "id" in df.columns:  # preserva IDs originais
+                        # Se a tabela tiver coluna "id", preserva os IDs originais
+                        if "id" in df.columns:
                             cols = df.columns.tolist()
                             placeholders = ",".join(["?"] * len(cols))
                             colnames = ",".join(cols)
@@ -777,8 +780,8 @@ elif menu == "Configurações":
                         else:
                             df.to_sql(tabela, conn, if_exists="append", index=False)
         
-                conn.commit()
-                st.success("Backup restaurado com sucesso!")
+                    conn.commit()
+                st.success("Backup restaurado com sucesso! IDs preservados ✅")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao restaurar backup: {e}")
