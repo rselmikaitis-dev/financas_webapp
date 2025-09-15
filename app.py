@@ -299,17 +299,16 @@ if menu == "Dashboard":
                     st.info("Não há gastos neste período.")
 
             # ===== Dashboard Principal =====
-           with tab5:
+            with tab5:
                 st.subheader("📊 Dashboard Principal")
-
+                
                 # === Função para gerar a tabela única ===
                 def gerar_tabela_completa(conn, df_lanc, ano_sel):
                     # ... tudo que você já tem dentro ...
                     return tabela_final
-
                 # === Geração da tabela única ===
                 tabela_completa = gerar_tabela_completa(conn, df_lanc, ano_sel)
-            
+                
                 # Exibir com Totais em negrito
                 st.dataframe(
                     tabela_completa.style.apply(
