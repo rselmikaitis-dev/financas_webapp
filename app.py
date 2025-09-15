@@ -711,10 +711,13 @@ elif menu == "Configurações":
     tab1, tab2, tab3, tab4 = st.tabs(["Dados", "Contas", "Categorias", "Subcategorias"])
 
     # ---- DADOS ----
+       # ---- DADOS ----
     with tab1:
         st.subheader("Gerenciar Dados")
 
-        # Exportar backup
+        # =========================
+        # EXPORTAR BACKUP
+        # =========================
         st.markdown("### 📥 Baixar Backup")
         if st.button("Baixar todos os dados"):
             import io, zipfile
@@ -728,8 +731,11 @@ elif menu == "Configurações":
             st.download_button("⬇️ Clique aqui para baixar backup.zip", buffer, file_name="backup_financas.zip")
 
         st.markdown("---")
-                # Importar backup
-            st.markdown("### 📤 Restaurar Backup")
+
+        # =========================
+        # RESTAURAR BACKUP
+        # =========================
+        st.markdown("### 📤 Restaurar Backup")
         uploaded_backup = st.file_uploader("Selecione o arquivo backup_financas.zip", type=["zip"])
         
         if uploaded_backup is not None and st.button("Restaurar backup do arquivo"):
@@ -748,7 +754,7 @@ elif menu == "Configurações":
                 st.session_state.conn = conn
                 cursor = conn.cursor()
 
-                # 🔹 Sempre recria a estrutura mínima correta
+                # 🔹 Garante a estrutura mínima do banco
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS contas (
                         id INTEGER PRIMARY KEY,
@@ -794,7 +800,6 @@ elif menu == "Configurações":
                             st.stop()
                         df = pd.read_csv(zf.open(f"{tabela}.csv"))
 
-                        # Preserva IDs originais se existirem
                         if "id" in df.columns:
                             cols = df.columns.tolist()
                             placeholders = ",".join(["?"] * len(cols))
@@ -808,11 +813,24 @@ elif menu == "Configurações":
 
                     conn.commit()
 
-                st.success("✅ Backup restaurado com sucesso!")
+                st.success("✅ Backup restaurado com sucesso! IDs preservados.")
                 st.rerun()
 
             except Exception as e:
                 st.error(f"Erro ao restaurar backup: {e}")
+
+        st.markdown("---")
+
+        # =========================
+        # RESETAR BANCO (OPCIONAL)
+        # =========================
+        if st.button("⚠️ Resetar banco (apaga tudo)"):
+            cursor.execute("DELETE FROM transactions")
+            cursor.execute("DELETE FROM subcategorias")
+            cursor.execute("DELETE FROM categorias")
+            cursor.execute("DELETE FROM contas")
+            conn.commit()
+            st.warning("Banco resetado com sucesso! Todas as tabelas estão vazias.")
 
     # ---- CONTAS ----
     with tab2:
