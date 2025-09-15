@@ -52,7 +52,6 @@ with logout_col:
 # BANCO DE DADOS
 # =====================
 if "conn" not in st.session_state:
-    db_path = "data.db"  # sempre na raiz do projeto
     st.session_state.conn = sqlite3.connect(db_path, check_same_thread=False)
 conn = st.session_state.conn
 cursor = conn.cursor()
@@ -762,6 +761,7 @@ if uploaded_backup is not None and st.button("Restaurar backup do arquivo"):
 
         # Recria o banco
         conn = sqlite3.connect("data.db", check_same_thread=False)
+        st.session_state.conn = conn
         cursor = conn.cursor()
 
         # Recria as tabelas (mesma estrutura usada no início do app)
