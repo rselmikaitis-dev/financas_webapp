@@ -1,16 +1,15 @@
 # Framework principal
 streamlit>=1.35.0
 
-# Banco de dados
+# Banco de dados / manipulação de dados
 pandas>=2.0.0
 openpyxl>=3.1.0     # leitura de Excel .xlsx
 xlrd>=2.0.1         # leitura de Excel .xls
-sqlite3-binary      # compatibilidade em alguns ambientes
 
 # Interface do grid editável
 streamlit-aggrid>=0.3.4
 
-# Menu lateral bonito
+# Menu lateral
 streamlit-option-menu>=0.3.6
 
 # Segurança (login com hash de senha)
