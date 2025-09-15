@@ -358,7 +358,7 @@ if menu == "Dashboard":
                 # ===== Investimentos =====
                 df_invest = df_lanc[
                     (df_lanc["Ano"] == ano_sel) & 
-                    (df_lanc["categoria"] == "Investimento")
+                    (df_lanc["categoria"] == "Investimentos")
                 ].copy()
             
                 if not df_invest.empty:
