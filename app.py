@@ -724,7 +724,18 @@ elif menu == "Configurações":
                             st.error(f"{tabela}.csv não encontrado no backup")
                             st.stop()
                         df = pd.read_csv(zf.open(f"{tabela}.csv"))
-                        df.to_sql(tabela, conn, if_exists="append", index=False)
+                    
+                        # Se a tabela tem coluna "id", preserva os IDs originais
+                        if "id" in df.columns:
+                            cols = df.columns.tolist()
+                            placeholders = ",".join(["?"] * len(cols))
+                            colnames = ",".join(cols)
+                            cursor.executemany(
+                                f"INSERT INTO {tabela} ({colnames}) VALUES ({placeholders})",
+                                df.itertuples(index=False, name=None)
+                            )
+                        else:
+                            df.to_sql(tabela, conn, if_exists="append", index=False)
                     conn.commit()
                 st.success("Backup restaurado com sucesso!")
                 st.rerun()
