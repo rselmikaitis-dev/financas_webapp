@@ -694,44 +694,37 @@ elif menu == "Configurações":
                 conn = sqlite3.connect("data.db", check_same_thread=False)
                 st.session_state.conn = conn
                 cursor = conn.cursor()
-
-                # 🔹 Garante a estrutura mínima do banco
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS contas (
-                        id INTEGER PRIMARY KEY,
-                        nome TEXT UNIQUE,
-                        dia_vencimento INTEGER
-                    )
-                """)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS categorias (
-                        id INTEGER PRIMARY KEY,
-                        nome TEXT UNIQUE,
-                        tipo TEXT DEFAULT 'Despesa Variável'
-                    )
-                """)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS subcategorias (
-                        id INTEGER PRIMARY KEY,
-                        categoria_id INTEGER,
-                        nome TEXT,
-                        UNIQUE(categoria_id, nome),
-                        FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE CASCADE
-                    )
-                """)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS transactions (
-                        id INTEGER PRIMARY KEY,
-                        date TEXT,
-                        description TEXT,
-                        value REAL,
-                        account TEXT,
-                        subcategoria_id INTEGER,
-                        status TEXT DEFAULT 'final',
-                        FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
-                    )
-                """)
-                conn.commit()
+                # Recria o banco
+                conn = sqlite3.connect("data.db", check_same_thread=False)
+                st.session_state.conn = conn
+                cursor = conn.cursor()
+                
+                # 🔹 Garante a estrutura mínima do banco (função única)
+                garantir_schema(conn)
+                
+                # 🔹 Restaura os dados do backup
+                with zipfile.ZipFile(uploaded_backup, "r") as zf:
+                    for tabela in ["contas", "categorias", "subcategorias", "transactions"]:
+                        if f"{tabela}.csv" not in zf.namelist():
+                            st.error(f"{tabela}.csv não encontrado no backup")
+                            st.stop()
+                        df = pd.read_csv(zf.open(f"{tabela}.csv"))
+                
+                        if "id" in df.columns:
+                            cols = df.columns.tolist()
+                            placeholders = ",".join(["?"] * len(cols))
+                            colnames = ",".join(cols)
+                            cursor.executemany(
+                                f"INSERT INTO {tabela} ({colnames}) VALUES ({placeholders})",
+                                df.itertuples(index=False, name=None)
+                            )
+                        else:
+                            df.to_sql(tabela, conn, if_exists="append", index=False)
+                
+                    conn.commit()
+                
+                st.success("✅ Backup restaurado com sucesso! IDs preservados.")
+                st.rerun()
 
                 # 🔹 Restaura os dados do backup
                 with zipfile.ZipFile(uploaded_backup, "r") as zf:
