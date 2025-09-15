@@ -751,14 +751,14 @@ elif menu == "Configurações":
         
         if uploaded_backup is not None and st.button("Restaurar backup do arquivo"):
             import io, zipfile
-            try:
-                with zipfile.ZipFile(uploaded_backup, "r") as zf:
-                    # Reset antes de restaurar
-                    cursor.execute("DELETE FROM transactions")
-                    cursor.execute("DELETE FROM subcategorias")
-                    cursor.execute("DELETE FROM categorias")
-                    cursor.execute("DELETE FROM contas")
-                    conn.commit()
+                try:
+                    with zipfile.ZipFile(uploaded_backup, "r") as zf:
+                        # Reset antes de restaurar
+                        cursor.execute("DELETE FROM transactions")
+                        cursor.execute("DELETE FROM subcategorias")
+                        cursor.execute("DELETE FROM categorias")
+                        cursor.execute("DELETE FROM contas")
+                        conn.commit()
         
                     # Restaurar na ordem correta para manter integridade
                     for tabela in ["contas", "categorias", "subcategorias", "transactions"]:
