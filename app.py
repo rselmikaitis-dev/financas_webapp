@@ -711,7 +711,7 @@ elif menu == "Configurações":
     tab1, tab2, tab3, tab4 = st.tabs(["Dados", "Contas", "Categorias", "Subcategorias"])
 
     # ---- DADOS ----
-       # ---- DADOS ----
+     
     with tab1:
         st.subheader("Gerenciar Dados")
 
