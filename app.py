@@ -382,18 +382,18 @@ if menu == "Dashboard":
             
                     return tabela_final
 
-    # === Geração da tabela única ===
-    tabela_completa = gerar_tabela_completa(conn, df_lanc, ano_sel)
-
-    # Exibir com Totais em negrito
-    st.dataframe(
-        tabela_completa.style.apply(
-            lambda x: ["font-weight: bold" if x["subcategoria"] == "Total" else "" for _ in x],
-            axis=1
-        ),
-        use_container_width=True
-    )
-            
+                    # === Geração da tabela única ===
+                    tabela_completa = gerar_tabela_completa(conn, df_lanc, ano_sel)
+                
+                    # Exibir com Totais em negrito
+                    st.dataframe(
+                        tabela_completa.style.apply(
+                            lambda x: ["font-weight: bold" if x["subcategoria"] == "Total" else "" for _ in x],
+                            axis=1
+                        ),
+                        use_container_width=True
+                    )
+                            
                 # ===== Investimentos =====
                 df_invest = df_lanc[
                     (df_lanc["Ano"] == ano_sel) & 
