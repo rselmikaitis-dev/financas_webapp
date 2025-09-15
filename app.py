@@ -303,12 +303,54 @@ if menu == "Dashboard":
             with tab5:
                 st.subheader("📊 Dashboard Principal")
                 
-                # === Função para gerar a tabela única ===
+               # === Função para gerar a tabela única ===
                 def gerar_tabela_completa(conn, df_lanc, ano_sel):
-                    # ... tudo que você já tem dentro ...
+                    # 🔹 Filtra os lançamentos pelo ano
+                    df_ano = df_lanc[df_lanc["Ano"] == ano_sel].copy()
+                    if df_ano.empty:
+                        return pd.DataFrame([{"categoria": "Nenhuma", "subcategoria": "Total"}])
+                
+                    # 🔹 Garante colunas numéricas corretas
+                    df_ano["value"] = pd.to_numeric(df_ano["value"], errors="coerce").fillna(0)
+                    df_ano["Mês"] = pd.to_datetime(df_ano["date"], errors="coerce").dt.month
+                
+                    # 🔹 Tabela dinâmica: soma por Categoria/Subcategoria × Mês
+                    pivot = df_ano.pivot_table(
+                        index=["categoria", "subcategoria"],
+                        columns="Mês",
+                        values="value",
+                        aggfunc="sum",
+                        fill_value=0
+                    )
+                
+                    # 🔹 Total por linha
+                    pivot["Total"] = pivot.sum(axis=1)
+                
+                    # 🔹 Totais por categoria
+                    categorias_totais = pivot.groupby(level=0).sum()
+                    categorias_totais.index = pd.MultiIndex.from_tuples([(cat, "Total") for cat in categorias_totais.index])
+                
+                    # 🔹 Total geral
+                    total_geral = pd.DataFrame(pivot.sum()).T
+                    total_geral.index = pd.MultiIndex.from_tuples([("Total", "Total")])
+                
+                    # 🔹 Junta tudo
+                    tabela_final = pd.concat([pivot, categorias_totais, total_geral])
+                
+                    # 🔹 Ordena (categorias → subcategorias → total)
+                    tabela_final = tabela_final.sort_index(level=[0, 1])
+                
+                    # 🔹 Reseta índice para exibir no Streamlit
+                    tabela_final = tabela_final.reset_index()
+                
+                    # 🔹 Converte meses para nomes (Jan, Fev...)
+                    meses_map = {
+                        1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
+                        7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez"
+                    }
+                    tabela_final = tabela_final.rename(columns={m: meses_map.get(m, m) for m in tabela_final.columns if isinstance(m, int)})
+                
                     return tabela_final
-                # === Geração da tabela única ===
-                tabela_completa = gerar_tabela_completa(conn, df_lanc, ano_sel)
                 
                 # Exibir com Totais em negrito
                 st.dataframe(
