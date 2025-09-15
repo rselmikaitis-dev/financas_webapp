@@ -856,6 +856,7 @@ elif menu == "Importação":
                         sug_subids.append(sid if (sid is not None) else None)
 
                     # Prévia
+                    st.subheader("Pré-visualização")
                     df_preview = df.copy()
                     df_preview["Conta destino"] = conta_sel
                     if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
@@ -863,21 +864,24 @@ elif menu == "Importação":
                         dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                         dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
                         df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
-
-                    st.subheader("Pré-visualização")
+                    
+                    # <<< NOVO: mostra as sugestões na prévia
+                    df_preview["Sugestão cat/sub"] = sug_labels
+                    df_preview["Confiança (%)"] = sug_scores
+                    
                     st.dataframe(df_preview, use_container_width=True)
 
                     # Importar direto (sem rascunho, já final)
                     if st.button("Importar lançamentos"):
                         from calendar import monthrange
                         inserted = 0
-                        for _, r in df.iterrows():
+                        for idx, r in df.iterrows():
                             desc = str(r["Descrição"])
                             val = r["Valor"]
                             if val is None:
                                 continue
-
-                            # Regras de data/valor
+                    
+                            # Regras de data/valor (mantido do seu código)
                             if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
                                 dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                                 dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
@@ -886,14 +890,20 @@ elif menu == "Importação":
                                 dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
                             if not isinstance(dt_obj, date):
                                 continue
-
+                    
+                            # <<< NOVO: define subcategoria sugerida (opcional)
+                            sub_id_to_insert = None
+                            if aplicar_auto:
+                                # usa limiar escolhido na UI; se score < limiar, já vem None
+                                sub_id_to_insert, _, _ = sugerir_subcategoria(desc, hist_sim, limiar=limiar)
+                    
                             cursor.execute("""
                                 INSERT INTO transactions (date, description, value, account, subcategoria_id, status)
                                 VALUES (?, ?, ?, ?, ?, 'final')
-                            """, (dt_obj.strftime("%Y-%m-%d"), desc, val, conta_sel, None))
+                            """, (dt_obj.strftime("%Y-%m-%d"), desc, val, conta_sel, sub_id_to_insert))
                             inserted += 1
+                    
                         conn.commit()
-
                         st.success(f"{inserted} lançamentos importados com sucesso!")
                         st.rerun()
             except Exception as e:
