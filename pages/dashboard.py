@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from ..helpers import seletor_mes_ano
+from helpers import seletor_mes_ano
 
 def show(conn):
     st.header("Dashboard Financeiro")
