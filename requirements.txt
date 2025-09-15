@@ -1,7 +1,7 @@
-streamlit>=1.36.0
-pandas>=2.0.0
-bcrypt>=4.0.1
-openpyxl>=3.1.2
-xlrd>=2.0.1
-st-aggrid>=0.3.4
-streamlit-option-menu>=0.3.6
+streamlit
+pandas
+openpyxl
+bcrypt
+streamlit-option-menu
+streamlit-aggrid
+plotly
