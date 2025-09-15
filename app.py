@@ -101,6 +101,44 @@ if "conn" not in st.session_state or st.session_state.conn is None:
     st.session_state.conn = conn
 
 conn = st.session_state.conn
+def garantir_schema(conn):
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS contas (
+            id INTEGER PRIMARY KEY,
+            nome TEXT UNIQUE,
+            dia_vencimento INTEGER
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS categorias (
+            id INTEGER PRIMARY KEY,
+            nome TEXT UNIQUE,
+            tipo TEXT DEFAULT 'Despesa Variável'
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS subcategorias (
+            id INTEGER PRIMARY KEY,
+            categoria_id INTEGER,
+            nome TEXT,
+            UNIQUE(categoria_id, nome),
+            FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY,
+            date TEXT,
+            description TEXT,
+            value REAL,
+            account TEXT,
+            subcategoria_id INTEGER,
+            status TEXT DEFAULT 'final',
+            FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
+        )
+    """)
+    conn.commit()
 cursor = conn.cursor()
 
 # =====================
