@@ -315,84 +315,84 @@ if menu == "Dashboard":
                     st.info("Não há gastos neste período.")
 
             # ===== Dashboard Principal =====
-               with tab5:
-                    st.subheader("📊 Dashboard Principal")
-                
-                    # === Função para gerar a tabela única ===
-                    def gerar_tabela_completa(conn, df_lanc, ano_sel):
-                        # Mapeamento de meses
-                        meses_map = {1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
-                                     7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"}
-                
-                        df_lanc["Mês Nome"] = df_lanc["Mês"].map(meses_map)
-                
-                        # Buscar todos os tipos de categoria cadastrados
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT DISTINCT tipo FROM categorias ORDER BY tipo")
-                        tipos = [r[0] for r in cursor.fetchall()]
-                
-                        tabelas = []
-                
-                        for tipo in tipos:
-                            # Todas as subcategorias do tipo
-                            query = """
-                                SELECT s.nome as subcategoria
-                                FROM subcategorias s
-                                JOIN categorias c ON s.categoria_id = c.id
-                                WHERE c.tipo = ?
-                                ORDER BY c.nome, s.nome
-                            """
-                            all_subs = pd.read_sql_query(query, conn, params=(tipo,))
-                
-                            # Dados desse tipo
-                            df_tipo = df_lanc[(df_lanc["Ano"] == ano_sel) & (df_lanc["tipo"] == tipo)].copy()
-                
-                            if not df_tipo.empty:
-                                pivot = df_tipo.pivot_table(
-                                    index="subcategoria",
-                                    columns="Mês Nome",
-                                    values="value",
-                                    aggfunc="sum",
-                                    fill_value=0
-                                ).reset_index()
-                
-                                # Garante todas as subcategorias
-                                pivot = all_subs.merge(pivot, on="subcategoria", how="left").fillna(0)
-                            else:
-                                pivot = all_subs.copy()
-                                for m in meses_map.values():
-                                    pivot[m] = 0
-                
-                            # Linha de total
-                            total = pivot.drop(columns=["subcategoria"]).sum().to_frame().T
-                            total.insert(0, "subcategoria", "Total")
-                            pivot = pd.concat([pivot, total], ignore_index=True)
-                
-                            # Adiciona coluna de seção (tipo de categoria)
-                            pivot.insert(0, "Seção", tipo)
-                
-                            tabelas.append(pivot)
-                
-                        # Junta tudo
-                        tabela_final = pd.concat(tabelas, ignore_index=True)
-                
-                        # Formata valores em R$
-                        for col in tabela_final.columns[2:]:
-                            tabela_final[col] = tabela_final[col].apply(lambda x: f"R$ {x:,.2f}")
-                
-                        return tabela_final
-                
-                    # === Geração da tabela única ===
-                    tabela_completa = gerar_tabela_completa(conn, df_lanc, ano_sel)
-                
-                    # Exibir com Totais em negrito
-                    st.dataframe(
-                        tabela_completa.style.apply(
-                            lambda x: ["font-weight: bold" if x["subcategoria"] == "Total" else "" for _ in x],
-                            axis=1
-                        ),
-                        use_container_width=True
-                    )
+                with tab5:
+    st.subheader("📊 Dashboard Principal")
+
+    # === Função para gerar a tabela única ===
+    def gerar_tabela_completa(conn, df_lanc, ano_sel):
+        # Mapeamento de meses
+        meses_map = {1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
+                     7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"}
+
+        df_lanc["Mês Nome"] = df_lanc["Mês"].map(meses_map)
+
+        # Buscar todos os tipos de categoria cadastrados
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT tipo FROM categorias ORDER BY tipo")
+        tipos = [r[0] for r in cursor.fetchall()]
+
+        tabelas = []
+
+        for tipo in tipos:
+            # Todas as subcategorias do tipo
+            query = """
+                SELECT s.nome as subcategoria
+                FROM subcategorias s
+                JOIN categorias c ON s.categoria_id = c.id
+                WHERE c.tipo = ?
+                ORDER BY c.nome, s.nome
+            """
+            all_subs = pd.read_sql_query(query, conn, params=(tipo,))
+
+            # Dados desse tipo
+            df_tipo = df_lanc[(df_lanc["Ano"] == ano_sel) & (df_lanc["tipo"] == tipo)].copy()
+
+            if not df_tipo.empty:
+                pivot = df_tipo.pivot_table(
+                    index="subcategoria",
+                    columns="Mês Nome",
+                    values="value",
+                    aggfunc="sum",
+                    fill_value=0
+                ).reset_index()
+
+                # Garante todas as subcategorias
+                pivot = all_subs.merge(pivot, on="subcategoria", how="left").fillna(0)
+            else:
+                pivot = all_subs.copy()
+                for m in meses_map.values():
+                    pivot[m] = 0
+
+            # Linha de total
+            total = pivot.drop(columns=["subcategoria"]).sum().to_frame().T
+            total.insert(0, "subcategoria", "Total")
+            pivot = pd.concat([pivot, total], ignore_index=True)
+
+            # Adiciona coluna de seção (tipo de categoria)
+            pivot.insert(0, "Seção", tipo)
+
+            tabelas.append(pivot)
+
+        # Junta tudo
+        tabela_final = pd.concat(tabelas, ignore_index=True)
+
+        # Formata valores em R$
+        for col in tabela_final.columns[2:]:
+            tabela_final[col] = tabela_final[col].apply(lambda x: f"R$ {x:,.2f}")
+
+        return tabela_final
+
+    # === Geração da tabela única ===
+    tabela_completa = gerar_tabela_completa(conn, df_lanc, ano_sel)
+
+    # Exibir com Totais em negrito
+    st.dataframe(
+        tabela_completa.style.apply(
+            lambda x: ["font-weight: bold" if x["subcategoria"] == "Total" else "" for _ in x],
+            axis=1
+        ),
+        use_container_width=True
+    )
             
                 # ===== Investimentos =====
                 df_invest = df_lanc[
