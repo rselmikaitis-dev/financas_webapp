@@ -179,6 +179,26 @@ def is_cartao_credito(nome_conta: str) -> bool:
     s = unicodedata.normalize("NFKD", str(nome_conta)).encode("ASCII", "ignore").decode().lower().strip()
     return s.startswith("cartao de credito")
 
+from rapidfuzz import fuzz, process
+
+def classificar_por_similaridade(descricao, historico, limiar=85):
+    """
+    Busca a categoria/subcategoria mais parecida com base no histórico.
+    historico: lista de tuplas (descricao, categoria_id, subcategoria_id)
+    """
+    if not historico:
+        return None, None
+    
+    choices = [h[0] for h in historico]  # só descrições
+    best_match = process.extractOne(descricao, choices, scorer=fuzz.token_sort_ratio)
+    
+    if best_match:
+        match_desc, score, idx = best_match
+        if score >= limiar:
+            _, cat_id, sub_id = historico[idx]
+            return cat_id, sub_id
+    return None, None
+
 # =====================
 # MENU
 # =====================
