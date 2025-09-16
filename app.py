@@ -192,13 +192,10 @@ import re as _re
 def _normalize_desc(s: str) -> str:
     s = str(s or "").lower().strip()
     s = _ud.normalize("NFKD", s).encode("ascii", "ignore").decode()
-    # remove parcelas tipo 09/10, 3/12 etc
-    s = _re.sub(r"\d+/\d+", " ", s)
-    # remove números soltos
-    s = _re.sub(r"\d+", " ", s)
-    s = _re.sub(r"[^\w\s]", " ", s)  # remove pontuação
-    # remove palavras genéricas
-    s = _re.sub(r"\b(compra|pagamento|parcela|autorizado|debito|credito|loja|transacao|marketplace)\b", " ", s)
+    s = _re.sub(r"\d+/\d+", " ", s)   # remove parcelas 09/10
+    s = _re.sub(r"\d+", " ", s)       # remove números soltos
+    s = _re.sub(r"[^\w\s]", " ", s)   # remove pontuação
+    s = _re.sub(r"\b(compra|pagamento|parcela|autorizado|debito|credito|loja|transacao)\b", " ", s)
     s = _re.sub(r"\s+", " ", s)
     return s.strip()
 
@@ -236,19 +233,15 @@ def _build_hist_similaridade(conn, conta=None):
     }
 
 def sugerir_subcategoria(descricao: str, hist: dict, limiar: int = 80):
-    """
-    Retorna (sub_id_aplicavel, label_sugerida, score_int).
-    Usa cache em st.session_state para capturar repetições imediatas.
-    """
     desc_norm = _normalize_desc(descricao)
 
-    # 🔹 Passo 1: cache em memória
     if "last_classif" not in st.session_state:
         st.session_state["last_classif"] = {}
+
+    # 🔹 só reaplica se a descrição normalizada for idêntica
     if desc_norm in st.session_state["last_classif"]:
         return st.session_state["last_classif"][desc_norm]
 
-    # 🔹 Passo 2: RapidFuzz
     if not hist or process is None:
         return None, None, 0
 
@@ -261,7 +254,7 @@ def sugerir_subcategoria(descricao: str, hist: dict, limiar: int = 80):
     sub_id = payload["sub_id"] if score >= limiar else None
 
     resultado = (sub_id, payload["label"], int(score))
-    if sub_id:  # só guarda no cache se realmente classificou
+    if sub_id:
         st.session_state["last_classif"][desc_norm] = resultado
     return resultado
 
