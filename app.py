@@ -872,6 +872,15 @@ elif menu == "Importação":
                     else:
                         hist_sim = _build_hist_similaridade(conn)
 
+                    # 🔹 Debug das sugestões
+                    if hist_sim:
+                        st.subheader("🔍 Debug de Similaridade (primeiros 10 lançamentos importados)")
+                        for desc in df["Descrição"].head(10):
+                            sid, label, score = sugerir_subcategoria(desc, hist_sim, limiar=50)  # limiar baixo só para debug
+                            st.write(f"'{desc}' → {label} (score={score})")
+                    else:
+                        st.warning("Nenhum histórico encontrado para gerar sugestões.")
+
                     # Limiar ajustável
                     limiar = st.slider(
                         "Limiar p/ auto-classificação por similaridade", 50, 100, 80, 1,
