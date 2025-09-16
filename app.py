@@ -934,7 +934,7 @@ elif menu == "Importação":
 # =====================
 elif menu == "Configurações":
     st.header("Configurações")
-    tab1, tab2, tab3, tab4 = st.tabs(["Dados", "Contas", "Categorias", "Subcategorias"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Dados", "Contas", "Categorias", "Subcategorias", "SQL Console"])
 
     # ---- DADOS ----
      
@@ -1212,3 +1212,20 @@ elif menu == "Configurações":
                         st.rerun()
                     except sqlite3.IntegrityError:
                         st.error("Já existe essa subcategoria")
+        with tab5:
+            st.subheader("🛠️ SQL Console (avançado)")
+        
+            query = st.text_area("Digite sua consulta SQL (somente SELECT):", height=120)
+        
+            if st.button("Executar consulta"):
+                if not query.strip().lower().startswith("select"):
+                    st.error("⚠️ Só é permitido SELECT por segurança.")
+                else:
+                    try:
+                        df_query = pd.read_sql_query(query, conn)
+                        if df_query.empty:
+                            st.info("Consulta executada, mas não retornou dados.")
+                        else:
+                            st.dataframe(df_query, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Erro ao executar: {e}")
