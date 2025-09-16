@@ -204,25 +204,37 @@ def _normalize_desc(s: str) -> str:
 
     return s.strip()
 
-def _build_hist_similaridade(conn):
+def _build_hist_similaridade(conn, conta=None):
     """
     Retorna um dicionário com 'choices' (descrições normalizadas) e 'payloads' (sub_id, label).
+    Se 'conta' for informado, filtra só lançamentos dessa conta.
     Usa apenas lançamentos que JÁ têm subcategoria.
     """
     if process is None:
         return None
+
     q = """
-        SELECT t.description, s.id AS sub_id, (c.nome || ' → ' || s.nome) AS label
+        SELECT t.description, s.id AS sub_id, (c.nome || ' → ' || s.nome) AS label, t.account
         FROM transactions t
         JOIN subcategorias s ON t.subcategoria_id = s.id
         JOIN categorias    c ON s.categoria_id   = c.id
         WHERE t.subcategoria_id IS NOT NULL AND t.description IS NOT NULL
     """
     dfh = pd.read_sql_query(q, conn)
+
     if dfh.empty:
         return None
+
+    # 🔹 Filtro por conta, se informado
+    if conta:
+        dfh = dfh[dfh["account"] == conta]
+
+    if dfh.empty:
+        return None
+
     dfh["desc_norm"] = dfh["description"].map(_normalize_desc)
-    dfh = dfh.drop_duplicates(subset=["desc_norm", "sub_id"])  # acelera e desruide repetições
+    dfh = dfh.drop_duplicates(subset=["desc_norm", "sub_id"])
+
     return {
         "choices": dfh["desc_norm"].tolist(),
         "payloads": dfh[["sub_id", "label"]].to_dict(orient="records")
