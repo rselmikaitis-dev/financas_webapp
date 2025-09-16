@@ -192,20 +192,20 @@ import re as _re
 def _normalize_desc(s: str) -> str:
     s = str(s or "").lower().strip()
     s = _ud.normalize("NFKD", s).encode("ascii", "ignore").decode()
-    # remove números seguidos de "/" (parcelas tipo 09/10)
+    # remove parcelas tipo 09/10, 3/12 etc
     s = _re.sub(r"\d+/\d+", " ", s)
     # remove números soltos
     s = _re.sub(r"\d+", " ", s)
     s = _re.sub(r"[^\w\s]", " ", s)  # remove pontuação
-    s = _re.sub(r"\b(compra|pagamento|parcela|autorizado|debito|credito|loja|transacao)\b", " ", s)
+    # remove palavras genéricas
+    s = _re.sub(r"\b(compra|pagamento|parcela|autorizado|debito|credito|loja|transacao|marketplace)\b", " ", s)
     s = _re.sub(r"\s+", " ", s)
     return s.strip()
 
 def _build_hist_similaridade(conn, conta=None):
     """
-    Retorna um dicionário com 'choices' (descrições normalizadas) e 'payloads' (sub_id, label).
-    Se 'conta' for informado, filtra só lançamentos dessa conta.
-    Usa apenas lançamentos que JÁ têm subcategoria.
+    Retorna histórico de descrições já classificadas.
+    Se 'conta' for informada, filtra só por ela.
     """
     if process is None:
         return None
@@ -218,11 +218,9 @@ def _build_hist_similaridade(conn, conta=None):
         WHERE t.subcategoria_id IS NOT NULL AND t.description IS NOT NULL
     """
     dfh = pd.read_sql_query(q, conn)
-
     if dfh.empty:
         return None
 
-    # 🔹 Filtro por conta, se informado
     if conta:
         dfh = dfh[dfh["account"] == conta]
 
@@ -237,21 +235,35 @@ def _build_hist_similaridade(conn, conta=None):
         "payloads": dfh[["sub_id", "label"]].to_dict(orient="records")
     }
 
-def sugerir_subcategoria(descricao: str, hist: dict, limiar: int = 85):
+def sugerir_subcategoria(descricao: str, hist: dict, limiar: int = 80):
     """
     Retorna (sub_id_aplicavel, label_sugerida, score_int).
-    sub_id_aplicavel vira None se a confiança < limiar (ou se não tiver rapidfuzz).
+    Usa cache em st.session_state para capturar repetições imediatas.
     """
+    desc_norm = _normalize_desc(descricao)
+
+    # 🔹 Passo 1: cache em memória
+    if "last_classif" not in st.session_state:
+        st.session_state["last_classif"] = {}
+    if desc_norm in st.session_state["last_classif"]:
+        return st.session_state["last_classif"][desc_norm]
+
+    # 🔹 Passo 2: RapidFuzz
     if not hist or process is None:
         return None, None, 0
-    desc_norm = _normalize_desc(descricao)
+
     match = process.extractOne(desc_norm, hist["choices"], scorer=fuzz.token_set_ratio)
     if not match:
         return None, None, 0
+
     _, score, idx = match
     payload = hist["payloads"][idx]
     sub_id = payload["sub_id"] if score >= limiar else None
-    return sub_id, payload["label"], int(score)
+
+    resultado = (sub_id, payload["label"], int(score))
+    if sub_id:  # só guarda no cache se realmente classificou
+        st.session_state["last_classif"][desc_norm] = resultado
+    return resultado
 
 # =====================
 # MENU
@@ -854,10 +866,16 @@ elif menu == "Importação":
                     df["Valor"] = df["Valor"].apply(parse_money)
 
                     # 🔹 Carrega histórico de similaridade (com fallback)
+                    # 🔹 Carrega histórico de similaridade
                     if is_cartao_credito(conta_sel):
-                        hist_sim = _build_hist_similaridade(conn, conta=conta_sel)
-                        if not hist_sim:
-                            hist_sim = _build_hist_similaridade(conn)
+                        hist_cartao = _build_hist_similaridade(conn, conta=conta_sel) or {"choices": [], "payloads": []}
+                        hist_geral = _build_hist_similaridade(conn) or {"choices": [], "payloads": []}
+                    
+                        # combina cartão + geral
+                        hist_sim = {
+                            "choices": hist_cartao["choices"] + hist_geral["choices"],
+                            "payloads": hist_cartao["payloads"] + hist_geral["payloads"],
+                        }
                     else:
                         hist_sim = _build_hist_similaridade(conn)
 
