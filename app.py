@@ -856,16 +856,17 @@ elif menu == "Importação":
                     df["Data"] = df["Data"].apply(parse_date)
                     df["Valor"] = df["Valor"].apply(parse_money)
 
-                    # 🔹 Carrega histórico de similaridade (com filtro se for cartão)
+                    # 🔹 Carrega histórico de similaridade (com fallback)
                     if is_cartao_credito(conta_sel):
                         hist_sim = _build_hist_similaridade(conn, conta=conta_sel)
-                        if not hist_sim:  # 🔹 fallback: se não houver base no cartão, usa geral
+                        if not hist_sim:
                             hist_sim = _build_hist_similaridade(conn)
                     else:
                         hist_sim = _build_hist_similaridade(conn)
 
+                    # Limiar ajustável
                     limiar = st.slider(
-                        "Limiar p/ auto-classificação por similaridade", 60, 100, 85, 1,
+                        "Limiar p/ auto-classificação por similaridade", 50, 100, 80, 1,
                         help="Compara a descrição com lançamentos já classificados (RapidFuzz)."
                     )
                     aplicar_auto = st.checkbox(
@@ -873,11 +874,15 @@ elif menu == "Importação":
                         value=True,
                         help="Se desmarcar, as sugestões só aparecem na prévia."
                     )
-                    
+
+                    # 🔹 Debug opcional: mostra o que está no histórico
+                    if hist_sim:
+                        st.write("Histórico disponível (primeiros 10 normalizados):", hist_sim["choices"][:10])
+
                     # Sugestões para a PRÉVIA
                     sug_labels, sug_scores, sug_subids = [], [], []
                     for desc in df["Descrição"].fillna(""):
-                        sid, label, score = sugerir_subcategoria(desc, hist_sim, limiar=0)
+                        sid, label, score = sugerir_subcategoria(desc, hist_sim, limiar=limiar)
                         sug_labels.append(label or "")
                         sug_scores.append(int(score or 0))
                         sug_subids.append(sid if (sid is not None) else None)
@@ -891,10 +896,10 @@ elif menu == "Importação":
                         dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                         dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
                         df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
-                    
+
                     df_preview["Sugestão cat/sub"] = sug_labels
                     df_preview["Confiança (%)"] = sug_scores
-                    
+
                     st.dataframe(df_preview, use_container_width=True)
 
                     # Importar
@@ -906,7 +911,7 @@ elif menu == "Importação":
                             val = r["Valor"]
                             if val is None:
                                 continue
-                    
+
                             if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
                                 dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                                 dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
@@ -915,17 +920,17 @@ elif menu == "Importação":
                                 dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
                             if not isinstance(dt_obj, date):
                                 continue
-                    
+
                             sub_id_to_insert = None
                             if aplicar_auto:
                                 sub_id_to_insert, _, _ = sugerir_subcategoria(desc, hist_sim, limiar=limiar)
-                    
+
                             cursor.execute("""
                                 INSERT INTO transactions (date, description, value, account, subcategoria_id, status)
                                 VALUES (?, ?, ?, ?, ?, 'final')
                             """, (dt_obj.strftime("%Y-%m-%d"), desc, val, conta_sel, sub_id_to_insert))
                             inserted += 1
-                    
+
                         conn.commit()
                         st.success(f"{inserted} lançamentos importados com sucesso!")
                         st.rerun()
