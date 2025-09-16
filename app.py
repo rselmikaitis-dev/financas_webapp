@@ -821,18 +821,18 @@ elif menu == "Importação":
             st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: **{dia_venc_cc}**.")
             mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
 
-       if arquivo is not None:
-    try:
-        df = _read_uploaded(arquivo)
-        ...
-        if st.button("Importar lançamentos"):
-            # 🔹 aqui entra o código novo que eu te mandei
-            ...
-            conn.commit()
-            st.success(f"{inserted} lançamentos importados com sucesso!")
-            st.rerun()
-    except Exception as e:
-        st.error(f"Erro ao processar arquivo: {e}")
+           if arquivo is not None:
+                try:
+                    df = _read_uploaded(arquivo)
+                    ...
+                    if st.button("Importar lançamentos"):
+                        # 🔹 aqui entra o código novo que eu te mandei
+                        ...
+                        conn.commit()
+                        st.success(f"{inserted} lançamentos importados com sucesso!")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao processar arquivo: {e}")
 # =====================
 # CONFIGURAÇÕES
 # =====================
