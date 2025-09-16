@@ -821,165 +821,18 @@ elif menu == "Importação":
             st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: **{dia_venc_cc}**.")
             mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
 
-        if arquivo is not None:
-            try:
-                df = _read_uploaded(arquivo)
-                df.columns = [c.strip().lower().replace("\ufeff", "") for c in df.columns]
-
-                mapa_colunas = {
-                    "data": ["data","data lançamento","data lancamento","dt","lançamento","data mov","data movimento"],
-                    "descrição": ["descrição","descricao","historico","histórico","detalhe","descricao/historico","lançamento"],
-                    "valor": ["valor","valor (r$)","valor r$","vlr","amount","valorlancamento","valor lancamento"]
-                }
-                col_map = {}
-                for alvo, poss in mapa_colunas.items():
-                    for p in poss:
-                        if p in df.columns:
-                            col_map[alvo] = p
-                            break
-
-                if "data" not in col_map or "valor" not in col_map:
-                    st.error(f"Arquivo inválido. Colunas lidas: {list(df.columns)}")
-                else:
-                    if "descrição" not in col_map:
-                        df["descrição"] = ""
-                        col_map["descrição"] = "descrição"
-
-                    df = df.rename(columns={
-                        col_map["data"]: "Data",
-                        col_map["descrição"]: "Descrição",
-                        col_map["valor"]: "Valor"
-                    })
-
-                    # Remove linhas de saldo
-                    df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
-
-                    # Conversões
-                    df["Data"] = df["Data"].apply(parse_date)
-                    df["Valor"] = df["Valor"].apply(parse_money)
-
-                    # 🔹 Carrega histórico de similaridade (com fallback)
-                    # 🔹 Carrega histórico de similaridade
-                    if is_cartao_credito(conta_sel):
-                        hist_cartao = _build_hist_similaridade(conn, conta=conta_sel) or {"choices": [], "payloads": []}
-                        hist_geral = _build_hist_similaridade(conn) or {"choices": [], "payloads": []}
-                    
-                        # combina cartão + geral
-                        hist_sim = {
-                            "choices": hist_cartao["choices"] + hist_geral["choices"],
-                            "payloads": hist_cartao["payloads"] + hist_geral["payloads"],
-                        }
-                    else:
-                        hist_sim = _build_hist_similaridade(conn)
-
-                    # 🔹 Debug das sugestões
-                    if hist_sim:
-                        st.subheader("🔍 Debug de Similaridade (primeiros 10 lançamentos importados)")
-                        for desc in df["Descrição"].head(10):
-                            sid, label, score = sugerir_subcategoria(desc, hist_sim, limiar=50)  # limiar baixo só para debug
-                            st.write(f"'{desc}' → {label} (score={score})")
-                    else:
-                        st.warning("Nenhum histórico encontrado para gerar sugestões.")
-
-                    # Limiar ajustável
-                    limiar = st.slider(
-                        "Limiar p/ auto-classificação por similaridade", 50, 100, 80, 1,
-                        help="Compara a descrição com lançamentos já classificados (RapidFuzz)."
-                    )
-                    aplicar_auto = st.checkbox(
-                        "Aplicar classificação automática na importação (quando confiança ≥ limiar)",
-                        value=True,
-                        help="Se desmarcar, as sugestões só aparecem na prévia."
-                    )
-
-                    # 🔹 Debug opcional: mostra o que está no histórico
-                    if hist_sim:
-                        st.write("Histórico disponível (primeiros 10 normalizados):", hist_sim["choices"][:10])
-
-                    # Sugestões para a PRÉVIA
-                    sug_labels, sug_scores, sug_subids = [], [], []
-                    for desc in df["Descrição"].fillna(""):
-                        sid, label, score = sugerir_subcategoria(desc, hist_sim, limiar=limiar)
-                        sug_labels.append(label or "")
-                        sug_scores.append(int(score or 0))
-                        sug_subids.append(sid if (sid is not None) else None)
-
-                    # Prévia
-                    st.subheader("Pré-visualização")
-                    df_preview = df.copy()
-                    df_preview["Conta destino"] = conta_sel
-                    if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-                        from calendar import monthrange
-                        dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
-                        dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
-                        df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
-
-                    df_preview["Sugestão cat/sub"] = sug_labels
-                    df_preview["Confiança (%)"] = sug_scores
-
-                    st.dataframe(df_preview, use_container_width=True)
-
-                    # Importar
-                    if st.button("Importar lançamentos"):
-                        from calendar import monthrange
-                        inserted = 0
-                    
-                        # Garante categoria "Estorno" e subcategoria "Cartão de Crédito"
-                        cursor.execute("SELECT id FROM categorias WHERE nome=?", ("Estorno",))
-                        row = cursor.fetchone()
-                        if row:
-                            estorno_cat_id = row[0]
-                        else:
-                            cursor.execute("INSERT INTO categorias (nome, tipo) VALUES (?, ?)", ("Estorno", "Neutra"))
-                            estorno_cat_id = cursor.lastrowid
-                    
-                        cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", ("Cartão de Crédito", estorno_cat_id))
-                        row = cursor.fetchone()
-                        if row:
-                            estorno_sub_id = row[0]
-                        else:
-                            cursor.execute(
-                                "INSERT INTO subcategorias (categoria_id, nome) VALUES (?, ?)",
-                                (estorno_cat_id, "Cartão de Crédito")
-                            )
-                            estorno_sub_id = cursor.lastrowid
-                    
-                        conn.commit()
-                    
-                        # Loop de lançamentos
-                        for _, r in df.iterrows():
-                            desc = str(r["Descrição"])
-                            val = r["Valor"]
-                            if val is None:
-                                continue
-                    
-                            # Regras de data/valor
-                            if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-                                dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
-                                dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
-                    
-                                if val < 0:
-                                    val = -abs(val)  # compra (sempre débito)
-                                    sub_id = None    # deixa sem categoria até o usuário classificar
-                                else:
-                                    val = abs(val)   # estorno ou crédito
-                                    sub_id = estorno_sub_id
-                            else:
-                                dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
-                                if not isinstance(dt_obj, date):
-                                    continue
-                                sub_id = None
-                    
-                            # Insere
-                            cursor.execute("""
-                                INSERT INTO transactions (date, description, value, account, subcategoria_id, status)
-                                VALUES (?, ?, ?, ?, ?, 'final')
-                            """, (dt_obj.strftime("%Y-%m-%d"), desc, val, conta_sel, sub_id))
-                            inserted += 1
-                    
-                        conn.commit()
-                        st.success(f"{inserted} lançamentos importados com sucesso!")
-                        st.rerun()
+       if arquivo is not None:
+    try:
+        df = _read_uploaded(arquivo)
+        ...
+        if st.button("Importar lançamentos"):
+            # 🔹 aqui entra o código novo que eu te mandei
+            ...
+            conn.commit()
+            st.success(f"{inserted} lançamentos importados com sucesso!")
+            st.rerun()
+    except Exception as e:
+        st.error(f"Erro ao processar arquivo: {e}")
 # =====================
 # CONFIGURAÇÕES
 # =====================
