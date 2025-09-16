@@ -1112,7 +1112,7 @@ elif menu == "Configurações":
                     st.error("Conta já existe")
 
     # ---- CATEGORIAS ----
-   with tab3:
+    with tab3:
     st.subheader("Gerenciar Categorias")
 
     tipos_possiveis = ["Despesa Fixa", "Despesa Variável", "Investimento", "Receita", "Neutra"]
