@@ -934,7 +934,7 @@ elif menu == "Importação":
 # =====================
 elif menu == "Configurações":
     st.header("Configurações")
-    tab1, tab2, tab3, tab4 = st.tabs(["Dados", "Contas", "Categorias", "Subcategorias", "SQL Console"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Dados", "Contas", "Categorias", "Subcategorias", "SQL Console"])
 
     # ---- DADOS ----
      
