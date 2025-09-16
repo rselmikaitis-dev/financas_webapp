@@ -923,36 +923,63 @@ elif menu == "Importação":
                     if st.button("Importar lançamentos"):
                         from calendar import monthrange
                         inserted = 0
-                        for idx, r in df.iterrows():
+                    
+                        # Garante categoria "Estorno" e subcategoria "Cartão de Crédito"
+                        cursor.execute("SELECT id FROM categorias WHERE nome=?", ("Estorno",))
+                        row = cursor.fetchone()
+                        if row:
+                            estorno_cat_id = row[0]
+                        else:
+                            cursor.execute("INSERT INTO categorias (nome, tipo) VALUES (?, ?)", ("Estorno", "Neutra"))
+                            estorno_cat_id = cursor.lastrowid
+                    
+                        cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", ("Cartão de Crédito", estorno_cat_id))
+                        row = cursor.fetchone()
+                        if row:
+                            estorno_sub_id = row[0]
+                        else:
+                            cursor.execute(
+                                "INSERT INTO subcategorias (categoria_id, nome) VALUES (?, ?)",
+                                (estorno_cat_id, "Cartão de Crédito")
+                            )
+                            estorno_sub_id = cursor.lastrowid
+                    
+                        conn.commit()
+                    
+                        # Loop de lançamentos
+                        for _, r in df.iterrows():
                             desc = str(r["Descrição"])
                             val = r["Valor"]
                             if val is None:
                                 continue
-
+                    
+                            # Regras de data/valor
                             if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
                                 dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                                 dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
-                                val = -abs(val)
+                    
+                                if val < 0:
+                                    val = -abs(val)  # compra (sempre débito)
+                                    sub_id = None    # deixa sem categoria até o usuário classificar
+                                else:
+                                    val = abs(val)   # estorno ou crédito
+                                    sub_id = estorno_sub_id
                             else:
                                 dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
-                            if not isinstance(dt_obj, date):
-                                continue
-
-                            sub_id_to_insert = None
-                            if aplicar_auto:
-                                sub_id_to_insert, _, _ = sugerir_subcategoria(desc, hist_sim, limiar=limiar)
-
+                                if not isinstance(dt_obj, date):
+                                    continue
+                                sub_id = None
+                    
+                            # Insere
                             cursor.execute("""
                                 INSERT INTO transactions (date, description, value, account, subcategoria_id, status)
                                 VALUES (?, ?, ?, ?, ?, 'final')
-                            """, (dt_obj.strftime("%Y-%m-%d"), desc, val, conta_sel, sub_id_to_insert))
+                            """, (dt_obj.strftime("%Y-%m-%d"), desc, val, conta_sel, sub_id))
                             inserted += 1
-
+                    
                         conn.commit()
                         st.success(f"{inserted} lançamentos importados com sucesso!")
                         st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao processar arquivo: {e}")
 # =====================
 # CONFIGURAÇÕES
 # =====================
