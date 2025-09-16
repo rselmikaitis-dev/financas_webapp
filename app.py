@@ -1112,111 +1112,112 @@ elif menu == "Configurações":
                     st.error("Conta já existe")
 
     # ---- CATEGORIAS ----
-    with tab3:
-        st.subheader("Gerenciar Categorias")
+   with tab3:
+    st.subheader("Gerenciar Categorias")
 
-        tipos_possiveis = ["Despesa Fixa", "Despesa Variável", "Investimento", "Receita", "Neutra"]
+    tipos_possiveis = ["Despesa Fixa", "Despesa Variável", "Investimento", "Receita", "Neutra"]
 
-        cursor.execute("SELECT id, nome, tipo FROM categorias ORDER BY nome")
-        df_cat = pd.DataFrame(cursor.fetchall(), columns=["ID", "Nome", "Tipo"])
-        if not df_cat.empty:
-            st.dataframe(df_cat, use_container_width=True)
+    cursor.execute("SELECT id, nome, tipo FROM categorias ORDER BY nome")
+    df_cat = pd.DataFrame(cursor.fetchall(), columns=["ID", "Nome", "Tipo"])
+    if not df_cat.empty:
+        st.dataframe(df_cat, use_container_width=True)
 
-            cat_sel = st.selectbox("Categoria existente", df_cat["Nome"])
-            row_sel = df_cat[df_cat["Nome"] == cat_sel].iloc[0]
+        cat_sel = st.selectbox("Categoria existente", df_cat["Nome"])
+        row_sel = df_cat[df_cat["Nome"] == cat_sel].iloc[0]
 
-            new_name = st.text_input("Novo nome categoria", value=row_sel["Nome"])
-            new_tipo = st.selectbox(
-                "Tipo",
-                tipos_possiveis,
-                index=tipos_possiveis.index(row_sel["Tipo"]) if row_sel["Tipo"] in tipos_possiveis else 1,
-            )
+        new_name = st.text_input("Novo nome categoria", value=row_sel["Nome"])
+        new_tipo = st.selectbox(
+            "Tipo",
+            tipos_possiveis,
+            index=tipos_possiveis.index(row_sel["Tipo"]) if row_sel["Tipo"] in tipos_possiveis else 1,
+        )
 
-            if st.button("Salvar alteração categoria"):
-                cursor.execute("UPDATE categorias SET nome=?, tipo=? WHERE id=?", (new_name.strip(), new_tipo, int(row_sel["ID"])))
+        if st.button("Salvar alteração categoria"):
+            cursor.execute("UPDATE categorias SET nome=?, tipo=? WHERE id=?", (new_name.strip(), new_tipo, int(row_sel["ID"])))
+            conn.commit()
+            st.success("Categoria atualizada!")
+            st.rerun()
+
+        if st.button("Excluir categoria"):
+            if row_sel["Nome"] == "Estorno":
+                st.warning("⚠️ A categoria 'Estorno' é protegida e não pode ser excluída.")
+            else:
+                cursor.execute("SELECT id FROM subcategorias WHERE categoria_id=?", (int(row_sel["ID"]),))
+                sub_ids = [r[0] for r in cursor.fetchall()]
+                if sub_ids:
+                    cursor.executemany("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", [(sid,) for sid in sub_ids])
+                    cursor.executemany("DELETE FROM subcategorias WHERE id=?", [(sid,) for sid in sub_ids])
+                cursor.execute("DELETE FROM categorias WHERE id=?", (int(row_sel["ID"]),))
                 conn.commit()
-                st.success("Categoria atualizada!")
+                st.warning("Categoria e subcategorias excluídas!")
                 st.rerun()
+    else:
+        st.info("Nenhuma categoria cadastrada.")
 
-            if st.button("Excluir categoria"):
-                if row_sel["Nome"] == "Estorno":
-                    st.warning("⚠️ A categoria 'Estorno' é protegida e não pode ser excluída.")
-                else:
-                    cursor.execute("SELECT id FROM subcategorias WHERE categoria_id=?", (int(row_sel["ID"]),))
-                    sub_ids = [r[0] for r in cursor.fetchall()]
-                    if sub_ids:
-                        # desvincula lançamentos e remove subcategorias
-                        cursor.executemany("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", [(sid,) for sid in sub_ids])
-                        cursor.executemany("DELETE FROM subcategorias WHERE id=?", [(sid,) for sid in sub_ids])
-                    cursor.execute("DELETE FROM categorias WHERE id=?", (int(row_sel["ID"]),))
-                    conn.commit()
-                    st.warning("Categoria e subcategorias excluídas!")
-                    st.rerun()
-
-        st.markdown("---")
-        nova_cat = st.text_input("Nova categoria")
-        novo_tipo = st.selectbox("Tipo da nova categoria", tipos_possiveis, key="novo_tipo_cat")
-        if st.button("Adicionar categoria"):
-            if nova_cat.strip():
-                try:
-                    cursor.execute("INSERT INTO categorias (nome, tipo) VALUES (?, ?)", (nova_cat.strip(), novo_tipo))
-                    conn.commit()
-                    st.success("Categoria adicionada!")
-                    st.rerun()
-                except sqlite3.IntegrityError:
-                    st.error("Categoria já existe")
+    st.markdown("---")
+    nova_cat = st.text_input("Nova categoria")
+    novo_tipo = st.selectbox("Tipo da nova categoria", tipos_possiveis, key="novo_tipo_cat")
+    if st.button("Adicionar categoria"):
+        if nova_cat.strip():
+            try:
+                cursor.execute("INSERT INTO categorias (nome, tipo) VALUES (?, ?)", (nova_cat.strip(), novo_tipo))
+                conn.commit()
+                st.success("Categoria adicionada!")
+                st.rerun()
+            except sqlite3.IntegrityError:
+                st.error("Categoria já existe")
 
     # ---- SUBCATEGORIAS ----
-    with tab4:
-        st.subheader("Gerenciar Subcategorias")
-        cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
-        categorias_opts = cursor.fetchall()
-        if not categorias_opts:
-            st.info("Cadastre uma categoria primeiro")
-        else:
-            cat_map = {c[1]: c[0] for c in categorias_opts}
-            cat_sel = st.selectbox("Categoria", list(cat_map.keys()))
-            cursor.execute("SELECT id, nome FROM subcategorias WHERE categoria_id=? ORDER BY nome", (cat_map[cat_sel],))
-            df_sub = pd.DataFrame(cursor.fetchall(), columns=["ID", "Nome"])
-            if not df_sub.empty:
-                st.dataframe(df_sub, use_container_width=True)
-                sub_sel = st.selectbox("Subcategoria existente", df_sub["Nome"])
-                new_sub = st.text_input("Novo nome subcategoria", value=sub_sel)
-                if st.button("Salvar alteração subcategoria"):
-                    cursor.execute("""
-                        UPDATE subcategorias
-                           SET nome=?
-                         WHERE id=(SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?)
-                    """, (new_sub.strip(), sub_sel, cat_map[cat_sel]))
-                    conn.commit()
-                    st.success("Subcategoria atualizada!")
-                    st.rerun()
-                if st.button("Excluir subcategoria"):
-                    if cat_sel == "Estorno" and sub_sel == "Cartão de Crédito":
-                        st.warning("⚠️ A subcategoria 'Cartão de Crédito' da categoria 'Estorno' é protegida e não pode ser excluída.")
-                    else:
-                        cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", (sub_sel, cat_map[cat_sel]))
-                        row = cursor.fetchone()
-                        if row:
-                            sid = row[0]
-                            cursor.execute("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", (sid,))
-                            cursor.execute("DELETE FROM subcategorias WHERE id=?", (sid,))
-                            conn.commit()
-                            st.warning("Subcategoria excluída e desvinculada dos lançamentos.")
-                            st.rerun()
-                            else:
-                                st.info("Nenhuma subcategoria nesta categoria.")
-
-            nova_sub = st.text_input("Nova subcategoria")
-            if st.button("Adicionar subcategoria"):
-                if nova_sub.strip():
-                    try:
-                        cursor.execute("INSERT INTO subcategorias (categoria_id, nome) VALUES (?, ?)", (cat_map[cat_sel], nova_sub.strip()))
+   with tab4:
+    st.subheader("Gerenciar Subcategorias")
+    cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
+    categorias_opts = cursor.fetchall()
+    if not categorias_opts:
+        st.info("Cadastre uma categoria primeiro")
+    else:
+        cat_map = {c[1]: c[0] for c in categorias_opts}
+        cat_sel = st.selectbox("Categoria", list(cat_map.keys()))
+        cursor.execute("SELECT id, nome FROM subcategorias WHERE categoria_id=? ORDER BY nome", (cat_map[cat_sel],))
+        df_sub = pd.DataFrame(cursor.fetchall(), columns=["ID", "Nome"])
+        if not df_sub.empty:
+            st.dataframe(df_sub, use_container_width=True)
+            sub_sel = st.selectbox("Subcategoria existente", df_sub["Nome"])
+            new_sub = st.text_input("Novo nome subcategoria", value=sub_sel)
+            if st.button("Salvar alteração subcategoria"):
+                cursor.execute("""
+                    UPDATE subcategorias
+                       SET nome=?
+                     WHERE id=(SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?)
+                """, (new_sub.strip(), sub_sel, cat_map[cat_sel]))
+                conn.commit()
+                st.success("Subcategoria atualizada!")
+                st.rerun()
+            if st.button("Excluir subcategoria"):
+                if cat_sel == "Estorno" and sub_sel == "Cartão de Crédito":
+                    st.warning("⚠️ A subcategoria 'Cartão de Crédito' da categoria 'Estorno' é protegida e não pode ser excluída.")
+                else:
+                    cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", (sub_sel, cat_map[cat_sel]))
+                    row = cursor.fetchone()
+                    if row:
+                        sid = row[0]
+                        cursor.execute("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", (sid,))
+                        cursor.execute("DELETE FROM subcategorias WHERE id=?", (sid,))
                         conn.commit()
-                        st.success("Subcategoria adicionada!")
+                        st.warning("Subcategoria excluída e desvinculada dos lançamentos.")
                         st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.error("Já existe essa subcategoria")
+        else:
+            st.info("Nenhuma subcategoria nesta categoria.")
+
+        nova_sub = st.text_input("Nova subcategoria")
+        if st.button("Adicionar subcategoria"):
+            if nova_sub.strip():
+                try:
+                    cursor.execute("INSERT INTO subcategorias (categoria_id, nome) VALUES (?, ?)", (cat_map[cat_sel], nova_sub.strip()))
+                    conn.commit()
+                    st.success("Subcategoria adicionada!")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("Já existe essa subcategoria")
         with tab5:
             st.subheader("🛠️ SQL Console (avançado)")
         
