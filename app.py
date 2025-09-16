@@ -1139,18 +1139,19 @@ elif menu == "Configurações":
                 st.rerun()
 
             if st.button("Excluir categoria"):
-                cursor.execute("SELECT id FROM subcategorias WHERE categoria_id=?", (int(row_sel["ID"]),))
-                sub_ids = [r[0] for r in cursor.fetchall()]
-                if sub_ids:
-                    # desvincula lançamentos e remove subcategorias
-                    cursor.executemany("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", [(sid,) for sid in sub_ids])
-                    cursor.executemany("DELETE FROM subcategorias WHERE id=?", [(sid,) for sid in sub_ids])
-                cursor.execute("DELETE FROM categorias WHERE id=?", (int(row_sel["ID"]),))
-                conn.commit()
-                st.warning("Categoria e subcategorias excluídas!")
-                st.rerun()
-        else:
-            st.info("Nenhuma categoria cadastrada.")
+                if row_sel["Nome"] == "Estorno":
+                    st.warning("⚠️ A categoria 'Estorno' é protegida e não pode ser excluída.")
+                else:
+                    cursor.execute("SELECT id FROM subcategorias WHERE categoria_id=?", (int(row_sel["ID"]),))
+                    sub_ids = [r[0] for r in cursor.fetchall()]
+                    if sub_ids:
+                        # desvincula lançamentos e remove subcategorias
+                        cursor.executemany("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", [(sid,) for sid in sub_ids])
+                        cursor.executemany("DELETE FROM subcategorias WHERE id=?", [(sid,) for sid in sub_ids])
+                    cursor.execute("DELETE FROM categorias WHERE id=?", (int(row_sel["ID"]),))
+                    conn.commit()
+                    st.warning("Categoria e subcategorias excluídas!")
+                    st.rerun()
 
         st.markdown("---")
         nova_cat = st.text_input("Nova categoria")
@@ -1191,17 +1192,20 @@ elif menu == "Configurações":
                     st.success("Subcategoria atualizada!")
                     st.rerun()
                 if st.button("Excluir subcategoria"):
-                    cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", (sub_sel, cat_map[cat_sel]))
-                    row = cursor.fetchone()
-                    if row:
-                        sid = row[0]
-                        cursor.execute("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", (sid,))
-                        cursor.execute("DELETE FROM subcategorias WHERE id=?", (sid,))
-                        conn.commit()
-                        st.warning("Subcategoria excluída e desvinculada dos lançamentos.")
-                        st.rerun()
-            else:
-                st.info("Nenhuma subcategoria nesta categoria.")
+                    if cat_sel == "Estorno" and sub_sel == "Cartão de Crédito":
+                        st.warning("⚠️ A subcategoria 'Cartão de Crédito' da categoria 'Estorno' é protegida e não pode ser excluída.")
+                    else:
+                        cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", (sub_sel, cat_map[cat_sel]))
+                        row = cursor.fetchone()
+                        if row:
+                            sid = row[0]
+                            cursor.execute("UPDATE transactions SET subcategoria_id=NULL WHERE subcategoria_id=?", (sid,))
+                            cursor.execute("DELETE FROM subcategorias WHERE id=?", (sid,))
+                            conn.commit()
+                            st.warning("Subcategoria excluída e desvinculada dos lançamentos.")
+                            st.rerun()
+                            else:
+                                st.info("Nenhuma subcategoria nesta categoria.")
 
             nova_sub = st.text_input("Nova subcategoria")
             if st.button("Adicionar subcategoria"):
