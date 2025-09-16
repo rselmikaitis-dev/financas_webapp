@@ -844,8 +844,12 @@ elif menu == "Importação":
                     df["Data"] = df["Data"].apply(parse_date)
                     df["Valor"] = df["Valor"].apply(parse_money)
 
-                    # <<< NOVO: carrega histórico e configura UI de sugestão
-                    hist_sim = _build_hist_similaridade(conn)
+                    # 🔹 Carrega histórico de similaridade (com filtro se for cartão)
+                    if is_cartao_credito(conta_sel):
+                        hist_sim = _build_hist_similaridade(conn, conta=conta_sel)
+                    else:
+                        hist_sim = _build_hist_similaridade(conn)
+
                     limiar = st.slider(
                         "Limiar p/ auto-classificação por similaridade", 60, 100, 85, 1,
                         help="Compara a descrição com lançamentos já classificados (RapidFuzz)."
@@ -856,10 +860,10 @@ elif menu == "Importação":
                         help="Se desmarcar, as sugestões só aparecem na prévia."
                     )
                     
-                    # <<< NOVO: gera colunas de sugestão para a PRÉVIA (não altera seu DF base)
+                    # Sugestões para a PRÉVIA
                     sug_labels, sug_scores, sug_subids = [], [], []
                     for desc in df["Descrição"].fillna(""):
-                        sid, label, score = sugerir_subcategoria(desc, hist_sim, limiar=0)  # mostra score real
+                        sid, label, score = sugerir_subcategoria(desc, hist_sim, limiar=0)
                         sug_labels.append(label or "")
                         sug_scores.append(int(score or 0))
                         sug_subids.append(sid if (sid is not None) else None)
@@ -874,13 +878,12 @@ elif menu == "Importação":
                         dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
                         df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
                     
-                    # <<< NOVO: mostra as sugestões na prévia
                     df_preview["Sugestão cat/sub"] = sug_labels
                     df_preview["Confiança (%)"] = sug_scores
                     
                     st.dataframe(df_preview, use_container_width=True)
 
-                    # Importar direto (sem rascunho, já final)
+                    # Importar
                     if st.button("Importar lançamentos"):
                         from calendar import monthrange
                         inserted = 0
@@ -890,24 +893,18 @@ elif menu == "Importação":
                             if val is None:
                                 continue
                     
-                            # Regras de data/valor (mantido do seu código)
                             if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
                                 dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                                 dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
-                                val = -abs(val)  # sempre débito no cartão
+                                val = -abs(val)
                             else:
                                 dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
                             if not isinstance(dt_obj, date):
                                 continue
                     
-                         # <<< NOVO: define subcategoria sugerida (opcional)
-                        sub_id_to_insert = None
-                        if aplicar_auto:
-                            # Ajusta limiar se for cartão de crédito
-                            limiar_ajustado = limiar
-                            if is_cartao_credito(conta_sel):
-                                limiar_ajustado = min(limiar, 70)  # nunca mais que 70 para cartão
-                            sub_id_to_insert, _, _ = sugerir_subcategoria(desc, hist_sim, limiar=limiar_ajustado)
+                            sub_id_to_insert = None
+                            if aplicar_auto:
+                                sub_id_to_insert, _, _ = sugerir_subcategoria(desc, hist_sim, limiar=limiar)
                     
                             cursor.execute("""
                                 INSERT INTO transactions (date, description, value, account, subcategoria_id, status)
