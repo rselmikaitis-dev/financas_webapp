@@ -859,6 +859,8 @@ elif menu == "Importação":
                     # 🔹 Carrega histórico de similaridade (com filtro se for cartão)
                     if is_cartao_credito(conta_sel):
                         hist_sim = _build_hist_similaridade(conn, conta=conta_sel)
+                        if not hist_sim:  # 🔹 fallback: se não houver base no cartão, usa geral
+                            hist_sim = _build_hist_similaridade(conn)
                     else:
                         hist_sim = _build_hist_similaridade(conn)
 
