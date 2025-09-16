@@ -192,8 +192,17 @@ import re as _re
 def _normalize_desc(s: str) -> str:
     s = str(s or "").lower().strip()
     s = _ud.normalize("NFKD", s).encode("ascii", "ignore").decode()
+
+    # remove números (datas, parcelas, etc.)
+    s = _re.sub(r"\d+", " ", s)
+
+    # remove caracteres especiais (mantém apenas letras/números/espaços)
+    s = _re.sub(r"[^\w\s]", " ", s)
+
+    # normaliza espaços
     s = _re.sub(r"\s+", " ", s)
-    return s
+
+    return s.strip()
 
 def _build_hist_similaridade(conn):
     """
