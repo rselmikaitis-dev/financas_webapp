@@ -859,7 +859,12 @@ elif menu == "Importação":
                     df["Data"] = df["Data"].apply(parse_date)
                     df["Valor"] = df["Valor"].apply(parse_money)
 
-                    # Prévia
+                    # ---------- PRÉ-VISUALIZAÇÃO ----------
+                    st.subheader("Pré-visualização")
+
+                    # 🔹 histórico de classificações já feitas
+                    hist = _build_hist_similaridade(conn, conta_sel)
+
                     df_preview = df.copy()
                     df_preview["Conta destino"] = conta_sel
                     if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
@@ -868,10 +873,27 @@ elif menu == "Importação":
                         dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
                         df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
 
-                    st.subheader("Pré-visualização")
+                    # 🔹 tenta sugerir categoria/subcategoria
+                    sugestoes = []
+                    for _, r in df_preview.iterrows():
+                        desc = str(r["Descrição"])
+                        val = r["Valor"]
+                        if val is None:
+                            sugestoes.append("Nenhuma")
+                            continue
+
+                        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc and val > 0:
+                            # Estorno -> fixo
+                            sugestoes.append("Estorno → Cartão de Crédito")
+                        else:
+                            sub_id, label, score = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
+                            sugestoes.append(label if sub_id else "Nenhuma")
+
+                    df_preview["Sugestão Categoria/Sub"] = sugestoes
+
                     st.dataframe(df_preview, use_container_width=True)
 
-                    # Importar direto
+                    # ---------- IMPORTAR ----------
                     if st.button("Importar lançamentos"):
                         from calendar import monthrange
                         inserted = 0
@@ -914,10 +936,10 @@ elif menu == "Importação":
                                 dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
 
                                 if val < 0:
-                                    val = -abs(val)  # compra (sempre débito)
+                                    val = -abs(val)  # compra
                                     sub_id, _, _ = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
                                 else:
-                                    val = abs(val)   # estorno (crédito)
+                                    val = abs(val)   # estorno
                                     sub_id = estorno_sub_id
                             else:
                                 dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
