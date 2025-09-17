@@ -791,7 +791,6 @@ elif menu == "Lançamentos":
             st.session_state["grid_refresh"] += 1
             st.rerun()
 elif menu == "Importação":
-    elif menu == "Importação":
     st.header("Importação de Lançamentos")
 
     # Selecionar conta destino
