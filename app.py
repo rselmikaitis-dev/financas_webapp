@@ -53,6 +53,7 @@ import os
 # =====================
 # BANCO DE DADOS
 # =====================
+
 def garantir_schema(conn):
     cursor = conn.cursor()
     cursor.execute("""
@@ -99,7 +100,7 @@ def garantir_schema(conn):
             account TEXT,
             categoria_id INTEGER,
             subcategoria_id INTEGER,
-            origem TEXT  -- "parcela_cartao", "media_despesa", "manual"
+            origem TEXT, -- "parcela_cartao", "media_despesa", "manual"
             status TEXT DEFAULT 'previsto',
             FOREIGN KEY (categoria_id) REFERENCES categorias(id),
             FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
