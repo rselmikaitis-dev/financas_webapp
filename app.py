@@ -860,7 +860,7 @@ elif menu == "Importação":
 # =====================
 # PLANEJAMENTO
 # =====================
-elif menu == "Planejado":
+elif menu == "Planejamento":
     st.header("📅 Planejamento Anual")
 
     # Selecionar ano
