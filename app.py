@@ -263,17 +263,17 @@ def sugerir_subcategoria(descricao: str, hist: dict, limiar: int = 80):
 with st.sidebar:
     menu = option_menu(
         "Menu",
-        ["Dashboard", "Lançamentos", "Importação", "Configurações"],
+        ["Dashboard Principal", "Lançamentos", "Importação", "Configurações"],
         menu_icon=None,
         icons=["", "", "", ""],
         default_index=0
     )
 
 # =====================
-# DASHBOARD
+# DASHBOARD PRINCIPAL (único)
 # =====================
-if menu == "Dashboard":
-    st.header("📊 Dashboard (Visão Anual)")
+if menu == "Dashboard Principal":
+    st.header("📊 Dashboard Principal (Visão Anual)")
 
     df_lanc = read_table_transactions(conn)
 
@@ -427,45 +427,7 @@ if menu == "Dashboard":
                 yaxis=dict(autorange="reversed")  # mantém ordem correta
             )
 
-            from streamlit_plotly_events import plotly_events
-            selected_points = plotly_events(fig, click_event=True, hover_event=False, override_height=600)
-
             st.plotly_chart(fig, use_container_width=True)
-
-            # =====================
-            # DETALHES AO CLICAR
-            # =====================
-            if selected_points:
-                ponto = selected_points[0]
-                item = ponto["y"]   # linha → categoria
-                mes  = ponto["x"]   # coluna → mês
-
-                st.subheader(f"🔎 Detalhes: {item} – {mes}")
-
-                # converte nome do mês em número
-                mes_num = [k for k, v in meses_nomes.items() if v == mes][0]
-
-                tipo_map = {
-                    "Receitas": "Receita",
-                    "Investimentos": "Investimento",
-                    "Despesas Fixas": "Despesa Fixa",
-                    "Despesas Variáveis": "Despesa Variável",
-                    "Lucro/Prejuízo": None
-                }
-                tipo = tipo_map.get(item)
-
-                if tipo is None:
-                    st.info("Este valor é calculado, não há lançamentos diretos.")
-                else:
-                    df_det = df_ano[(df_ano["Mês"] == mes_num) & (df_ano["tipo"] == tipo)]
-
-                    if df_det.empty:
-                        st.warning("Nenhum lançamento encontrado.")
-                    else:
-                        st.dataframe(
-                            df_det[["date", "description", "value", "account", "subcategoria"]],
-                            use_container_width=True
-                        )
 
 # =====================
 # LANÇAMENTOS
