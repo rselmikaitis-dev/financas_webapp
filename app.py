@@ -428,6 +428,91 @@ if menu == "Dashboard Principal":
             )
 
             st.plotly_chart(fig, use_container_width=True)
+            # ================= Detalhamento por Item/Mês (sem plugin) =================
+            import plotly.express as px
+            
+            st.markdown("### 🔎 Detalhar composição")
+            col_det1, col_det2 = st.columns(2)
+            
+            itens_disponiveis = ["Receitas", "Investimentos", "Despesas Fixas", "Despesas Variáveis"]
+            item_escolhido = col_det1.selectbox("Item", itens_disponiveis, key="det_item")
+            
+            # nomes dos meses já existem em `meses_nomes`; criamos o reverso
+            meses_nomes_inv = {v: k for k, v in meses_nomes.items()}
+            mes_escolhido = col_det2.selectbox("Mês", list(meses_nomes.values()), key="det_mes")
+            mes_num = meses_nomes_inv[mes_escolhido]
+            
+            # Filtra o mês escolhido do ano já carregado em df_ano
+            df_mes = df_ano[df_ano["Mês"] == mes_num].copy()
+            
+            tipo_map = {
+                "Receitas": "Receita",
+                "Investimentos": "Investimento",
+                "Despesas Fixas": "Despesa Fixa",
+                "Despesas Variáveis": "Despesa Variável",
+            }
+            tipo_sel = tipo_map[item_escolhido]
+            
+            df_filtrado = df_mes[df_mes["tipo"] == tipo_sel].copy()
+            
+            st.subheader(f"Composição de {item_escolhido} – {mes_escolhido}/{ano_sel}")
+            
+            if df_filtrado.empty:
+                st.info("Nenhum lançamento encontrado para esse filtro.")
+            else:
+                # Para despesas/investimentos, usamos o valor absoluto (coerente com a tabela anual)
+                if tipo_sel != "Receita":
+                    df_filtrado["value"] = df_filtrado["value"].abs()
+            
+                # ---------- Resumo por subcategoria ----------
+                resumo = (
+                    df_filtrado
+                    .assign(subcategoria=df_filtrado["subcategoria"].fillna("Nenhuma"))
+                    .groupby("subcategoria", dropna=False, as_index=False)["value"]
+                    .sum()
+                    .sort_values("value", ascending=False)
+                )
+                total_item = float(resumo["value"].sum())
+                resumo["pct"] = resumo["value"] / total_item * 100 if total_item != 0 else 0.0
+            
+                # Tabela formatada
+                resumo_fmt = resumo.copy()
+                resumo_fmt.rename(columns={"subcategoria": "Subcategoria", "value": "Valor (R$)", "pct": "% do total"}, inplace=True)
+                resumo_fmt["Valor (R$)"] = resumo_fmt["Valor (R$)"].map(brl_fmt)
+                resumo_fmt["% do total"] = resumo_fmt["% do total"].map(lambda x: f"{x:.1f}%")
+            
+                st.dataframe(resumo_fmt, use_container_width=True)
+            
+                # ---------- Gráfico de rosca ----------
+                fig_pie = px.pie(
+                    resumo,
+                    names="subcategoria",
+                    values="value",
+                    hole=0.4,
+                    title=f"Composição de {item_escolhido} – {mes_escolhido}/{ano_sel}",
+                )
+                # tooltip com valor e %
+                fig_pie.update_traces(
+                    hovertemplate="%{label}<br>Valor: %{value:.2f}<br>% do total: %{percent:.1%}<extra></extra>"
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+            
+                # ---------- Lançamentos individuais ----------
+                with st.expander("📜 Ver lançamentos individuais"):
+                    df_listagem = df_filtrado[["date", "description", "value", "account", "categoria", "subcategoria"]].copy()
+                    # Formatação de valor
+                    df_listagem["Valor (R$)"] = df_listagem["value"].map(brl_fmt)
+                    df_listagem["Data"] = pd.to_datetime(df_listagem["date"], errors="coerce").dt.strftime("%d/%m/%Y")
+                    df_listagem.rename(columns={
+                        "description": "Descrição",
+                        "account": "Conta",
+                        "categoria": "Categoria",
+                        "subcategoria": "Subcategoria",
+                    }, inplace=True)
+                    st.dataframe(
+                        df_listagem[["Data", "Descrição", "Valor (R$)", "Conta", "Categoria", "Subcategoria"]],
+                        use_container_width=True
+                    )
             from streamlit_plotly_events import plotly_events
             import plotly.express as px
             
