@@ -428,6 +428,77 @@ if menu == "Dashboard Principal":
             )
 
             st.plotly_chart(fig, use_container_width=True)
+            from streamlit_plotly_events import plotly_events
+            import plotly.express as px
+            
+            # --- Captura clique no heatmap ---
+            selected_points = plotly_events(fig, click_event=True, hover_event=False, override_height=600)
+            
+            if selected_points:
+                ponto = selected_points[0]
+                item = ponto["y"]   # linha (Receitas, Investimentos, etc.)
+                mes  = ponto["x"]   # coluna (Jan, Fev, ...)
+            
+                st.subheader(f"🔎 Detalhes de {item} – {mes}/{ano_sel}")
+            
+                # Converte nome do mês para número
+                meses_nomes_inv = {v: k for k, v in meses_nomes.items()}
+                mes_num = meses_nomes_inv[mes]
+            
+                # Filtra lançamentos daquele mês
+                df_mes = df_ano[df_ano["Mês"] == mes_num].copy()
+            
+                # Mapeia tipo selecionado
+                tipo_map = {
+                    "Receitas": "Receita",
+                    "Investimentos": "Investimento",
+                    "Despesas Fixas": "Despesa Fixa",
+                    "Despesas Variáveis": "Despesa Variável"
+                }
+                tipo = tipo_map.get(item)
+            
+                if tipo is None:
+                    st.info("Este valor é calculado, não há lançamentos diretos.")
+                else:
+                    df_filtrado = df_mes[df_mes["tipo"] == tipo].copy()
+                    if df_filtrado.empty:
+                        st.warning("Nenhum lançamento encontrado.")
+                    else:
+                        # --- Resumo por subcategoria ---
+                        resumo = (
+                            df_filtrado.groupby("subcategoria")["value"]
+                            .sum()
+                            .reset_index()
+                            .sort_values("value", ascending=False)
+                        )
+                        total = resumo["value"].sum()
+                        resumo["%"] = resumo["value"] / total * 100
+            
+                        st.dataframe(
+                            resumo.rename(columns={
+                                "subcategoria": "Subcategoria",
+                                "value": "Valor (R$)",
+                                "%": "% do total"
+                            }),
+                            use_container_width=True
+                        )
+            
+                        # --- Gráfico de rosca ---
+                        fig_pie = px.pie(
+                            resumo,
+                            names="subcategoria",
+                            values="value",
+                            hole=0.4,
+                            title=f"Composição de {item} – {mes}/{ano_sel}"
+                        )
+                        st.plotly_chart(fig_pie, use_container_width=True)
+            
+                        # --- Lançamentos individuais ---
+                        with st.expander("📜 Ver lançamentos individuais"):
+                            st.dataframe(
+                                df_filtrado[["date", "description", "value", "account", "subcategoria"]],
+                                use_container_width=True
+                            )
 
 # =====================
 # LANÇAMENTOS
