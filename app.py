@@ -791,6 +791,7 @@ elif menu == "Lançamentos":
             st.session_state["grid_refresh"] += 1
             st.rerun()
 elif menu == "Importação":
+    elif menu == "Importação":
     st.header("Importação de Lançamentos")
 
     # Selecionar conta destino
@@ -898,6 +899,9 @@ elif menu == "Importação":
 
                         conn.commit()
 
+                        # 🔹 histórico de classificações já feitas
+                        hist = _build_hist_similaridade(conn, conta_sel)
+
                         # Loop de lançamentos
                         for _, r in df.iterrows():
                             desc = str(r["Descrição"])
@@ -912,15 +916,15 @@ elif menu == "Importação":
 
                                 if val < 0:
                                     val = -abs(val)  # compra (sempre débito)
-                                    sub_id = None
+                                    sub_id, _, _ = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
                                 else:
-                                    val = abs(val)   # estorno ou crédito
+                                    val = abs(val)   # estorno (crédito)
                                     sub_id = estorno_sub_id
                             else:
                                 dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
                                 if not isinstance(dt_obj, date):
                                     continue
-                                sub_id = None
+                                sub_id, _, _ = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
 
                             # Insere
                             cursor.execute("""
