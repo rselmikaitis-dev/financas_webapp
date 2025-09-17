@@ -535,7 +535,7 @@ elif menu == "Dashboard Principal":
                 7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"
             }
 
-            # linhas do relatório (sem saldo)
+            # linhas do relatório
             linhas = {
                 "Receitas": [], 
                 "Investimentos": [], 
@@ -657,7 +657,8 @@ elif menu == "Dashboard Principal":
 
             fig.update_layout(
                 margin=dict(l=0, r=0, t=10, b=0),
-                xaxis=dict(side="top")
+                xaxis=dict(side="top"),
+                yaxis=dict(autorange="reversed")  # 🔹 garante ordem correta
             )
 
             st.plotly_chart(fig, use_container_width=True)
