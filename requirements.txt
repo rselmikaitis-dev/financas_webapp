@@ -4,5 +4,6 @@ openpyxl
 bcrypt
 streamlit-option-menu
 streamlit-aggrid
+streamlit-plotly-events
 plotly
 rapidfuzz
