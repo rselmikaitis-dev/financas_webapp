@@ -882,9 +882,14 @@ elif menu == "Importação":
                             sugestoes.append("Nenhuma")
                             continue
 
-                        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc and val > 0:
-                            # Estorno -> fixo
-                            sugestoes.append("Estorno → Cartão de Crédito")
+                        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
+                            if val > 0:
+                                # Compra normal
+                                sub_id, label, score = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
+                                sugestoes.append(label if sub_id else "Nenhuma")
+                            else:
+                                # Estorno
+                                sugestoes.append("Estorno → Cartão de Crédito")
                         else:
                             sub_id, label, score = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
                             sugestoes.append(label if sub_id else "Nenhuma")
@@ -930,16 +935,17 @@ elif menu == "Importação":
                             if val is None:
                                 continue
 
-                            # Regras de data/valor
                             if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
                                 dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                                 dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
 
-                                if val < 0:
-                                    val = -abs(val)  # compra
+                                if val > 0:
+                                    # Compra → grava como negativo
+                                    val = -abs(val)
                                     sub_id, _, _ = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
                                 else:
-                                    val = abs(val)   # estorno
+                                    # Estorno → grava como positivo
+                                    val = abs(val)
                                     sub_id = estorno_sub_id
                             else:
                                 dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
@@ -959,7 +965,6 @@ elif menu == "Importação":
                         st.rerun()
             except Exception as e:
                 st.error(f"Erro ao processar arquivo: {e}")
-
 # =====================
 # CONFIGURAÇÕES
 # =====================
