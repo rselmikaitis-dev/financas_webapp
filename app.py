@@ -263,17 +263,17 @@ def sugerir_subcategoria(descricao: str, hist: dict, limiar: int = 80):
 with st.sidebar:
     menu = option_menu(
         "Menu",
-        ["Dashboard Principal", "Lançamentos", "Importação", "Configurações"],
+        ["Dashboard", "Lançamentos", "Importação", "Configurações"],
         menu_icon=None,
         icons=["", "", "", ""],
         default_index=0
     )
 
 # =====================
-# DASHBOARD PRINCIPAL (único)
+# DASHBOARD
 # =====================
-if menu == "Dashboard Principal":
-    st.header("📊 Dashboard Principal (Visão Anual)")
+if menu == "Dashboard":
+    st.header("📊 Dashboard")
 
     df_lanc = read_table_transactions(conn)
 
