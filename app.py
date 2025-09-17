@@ -569,11 +569,14 @@ elif menu == "Dashboard Principal":
             ]
             linhas["Lucro/Prejuízo"] = lucro_prejuizo
 
+            # força a ordem desejada
+            ordem = ["Receitas", "Investimentos", "Despesas Fixas", "Despesas Variáveis", "Lucro/Prejuízo"]
+
             # monta dataframe base
             df_valores = pd.DataFrame({
-                "Item": list(linhas.keys()),
-                **{meses_nomes[m]: [linhas[k][m-1] for k in linhas] for m in range(1, 13)},
-                "Total Anual": [sum(linhas[k]) for k in linhas]
+                "Item": ordem,
+                **{meses_nomes[m]: [linhas[k][m-1] for k in ordem] for m in range(1, 13)},
+                "Total Anual": [sum(linhas[k]) for k in ordem]
             })
 
             # --- formata R$ ---
@@ -593,10 +596,7 @@ elif menu == "Dashboard Principal":
             Text = df_valores[cols].applymap(brl_fmt).values
 
             # Percentual vs Receita
-            if "Receitas" in items:
-                rec_series = df_valores.set_index("Item").loc["Receitas", cols].astype(float)
-            else:
-                rec_series = pd.Series([0]*len(cols), index=cols)
+            rec_series = df_valores.set_index("Item").loc["Receitas", cols].astype(float)
 
             custom_pct = []
             for i, item in enumerate(items):
@@ -633,28 +633,27 @@ elif menu == "Dashboard Principal":
             ))
 
             # --- Camada Lucro/Prejuízo (verde/vermelho) ---
-            if "Lucro/Prejuízo" in items:
-                lucro_idx = items.index("Lucro/Prejuízo")
-                z_lucro = np.full_like(Z, np.nan, dtype=float)
-                z_lucro[lucro_idx, :] = Z[lucro_idx, :]
+            lucro_idx = items.index("Lucro/Prejuízo")
+            z_lucro = np.full_like(Z, np.nan, dtype=float)
+            z_lucro[lucro_idx, :] = Z[lucro_idx, :]
 
-                fig.add_trace(go.Heatmap(
-                    z=z_lucro,
-                    x=cols,
-                    y=items,
-                    text=Text,
-                    texttemplate="%{text}",
-                    textfont={"size":12},
-                    customdata=custom_pct,
-                    hovertemplate=(
-                        "Item: %{y}<br>"
-                        "Mês: %{x}<br>"
-                        "% s/ Receita: %{customdata}<extra></extra>"
-                    ),
-                    colorscale=[[0, "#f8d4d4"], [0.5, "#f9f9f9"], [1, "#d4f8d4"]],
-                    showscale=False,
-                    xgap=2, ygap=2
-                ))
+            fig.add_trace(go.Heatmap(
+                z=z_lucro,
+                x=cols,
+                y=items,
+                text=Text,
+                texttemplate="%{text}",
+                textfont={"size":12},
+                customdata=custom_pct,
+                hovertemplate=(
+                    "Item: %{y}<br>"
+                    "Mês: %{x}<br>"
+                    "% s/ Receita: %{customdata}<extra></extra>"
+                ),
+                colorscale=[[0, "#f8d4d4"], [0.5, "#f9f9f9"], [1, "#d4f8d4"]],
+                showscale=False,
+                xgap=2, ygap=2
+            ))
 
             fig.update_layout(
                 margin=dict(l=0, r=0, t=10, b=0),
