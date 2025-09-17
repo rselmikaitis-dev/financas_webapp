@@ -380,13 +380,8 @@ if menu == "Dashboard":
             import plotly.graph_objects as go
 
             # --- Heatmap base ---
-            import numpy as np
-            import plotly.graph_objects as go
-            from streamlit_plotly_events import plotly_events
-            
-            # --- Heatmap base com valores reais ---
             fig = go.Figure(go.Heatmap(
-                z=Z,
+                z=np.zeros_like(Z),
                 x=cols,
                 y=items,
                 text=Text,
@@ -398,16 +393,16 @@ if menu == "Dashboard":
                     "Mês: %{x}<br>"
                     "% s/ Receita: %{customdata}<extra></extra>"
                 ),
-                colorscale="Blues",   # escala de azul
-                showscale=True,       # exibe barra de legenda
+                colorscale=[[0, "#f9f9f9"], [1, "#dfe7ff"]],
+                showscale=False,
                 xgap=2, ygap=2
             ))
-            
+
             # --- Camada Lucro/Prejuízo (verde/vermelho) ---
             lucro_idx = items.index("Lucro/Prejuízo")
             z_lucro = np.full_like(Z, np.nan, dtype=float)
             z_lucro[lucro_idx, :] = Z[lucro_idx, :]
-            
+
             fig.add_trace(go.Heatmap(
                 z=z_lucro,
                 x=cols,
@@ -425,28 +420,31 @@ if menu == "Dashboard":
                 showscale=False,
                 xgap=2, ygap=2
             ))
-            
+
             fig.update_layout(
                 margin=dict(l=0, r=0, t=10, b=0),
                 xaxis=dict(side="top"),
                 yaxis=dict(autorange="reversed")  # mantém ordem correta
             )
-            
-            # --- Renderiza e captura cliques ---
+
+            from streamlit_plotly_events import plotly_events
             selected_points = plotly_events(fig, click_event=True, hover_event=False, override_height=600)
-            
+
             st.plotly_chart(fig, use_container_width=True)
-            
-            # --- Detalhes ao clicar ---
+
+            # =====================
+            # DETALHES AO CLICAR
+            # =====================
             if selected_points:
                 ponto = selected_points[0]
-                item = ponto["y"]
-                mes  = ponto["x"]
-            
+                item = ponto["y"]   # linha → categoria
+                mes  = ponto["x"]   # coluna → mês
+
                 st.subheader(f"🔎 Detalhes: {item} – {mes}")
-            
+
+                # converte nome do mês em número
                 mes_num = [k for k, v in meses_nomes.items() if v == mes][0]
-            
+
                 tipo_map = {
                     "Receitas": "Receita",
                     "Investimentos": "Investimento",
@@ -455,15 +453,15 @@ if menu == "Dashboard":
                     "Lucro/Prejuízo": None
                 }
                 tipo = tipo_map.get(item)
-            
+
                 if tipo is None:
                     st.info("Este valor é calculado, não há lançamentos diretos.")
                 else:
                     df_det = df_ano[(df_ano["Mês"] == mes_num) & (df_ano["tipo"] == tipo)]
+
                     if df_det.empty:
                         st.warning("Nenhum lançamento encontrado.")
                     else:
-                        st.metric("Total do período", f"R$ {df_det['value'].sum():,.2f}")
                         st.dataframe(
                             df_det[["date", "description", "value", "account", "subcategoria"]],
                             use_container_width=True
