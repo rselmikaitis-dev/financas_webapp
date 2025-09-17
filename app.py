@@ -598,14 +598,23 @@ elif menu == "Dashboard Principal":
             for col in df_fmt.columns[1:]:
                 df_fmt[col] = df_fmt[col].apply(brl_fmt)
 
-            # === cores condicionais (saldo) ===
+            # === hovertext padronizado ===
+            n_rows, n_cols = df_fmt.shape
+            hovertext = []
+            for col in df_pct.columns:
+                col_vals = df_pct[col].astype(str).tolist()
+                while len(col_vals) < n_rows:
+                    col_vals.append("")
+                hovertext.append(col_vals)
+
+            # === cores condicionais (saldo em verde/vermelho) ===
             cols = list(df_valores.columns)
             fill_colors = []
             for col in cols:
                 col_colors = []
                 for i, row in df_valores.iterrows():
                     if col == "Item":
-                        col_colors.append("#f0f0f0")  # cinza na coluna de itens
+                        col_colors.append("#f0f0f0")  # coluna Item em cinza
                     elif row["Item"] == "Saldo":
                         v = row[col]
                         try:
@@ -615,18 +624,30 @@ elif menu == "Dashboard Principal":
                         col_colors.append("#d4f8d4" if v >= 0 else "#f8d4d4")
                     else:
                         col_colors.append("white")
-                fill_colors.append(col_colors)  # lista de cores por coluna
+                fill_colors.append(col_colors)
+
+            # === estilos (negrito no Saldo) ===
+            font_weights = []
+            for col in df_fmt.columns:
+                weights = []
+                for i, row in df_valores.iterrows():
+                    if row["Item"] == "Saldo":
+                        weights.append("bold")
+                    else:
+                        weights.append("normal")
+                font_weights.append(weights)
 
             # === Plotly Table ===
             import plotly.graph_objects as go
             fig = go.Figure(data=[go.Table(
                 header=dict(values=list(df_fmt.columns), fill_color="#e0e0e0", align="center"),
                 cells=dict(
-                    values=[df_fmt[col] for col in df_fmt.columns],
+                    values=[df_fmt[col].tolist() for col in df_fmt.columns],
                     align="center",
-                    fill_color=fill_colors,  # ✅ agora correto
-                    hovertext=[df_pct[col] for col in df_pct.columns],  # mostra % no hover
-                    hoverinfo="text"
+                    fill_color=fill_colors,
+                    hovertext=hovertext,
+                    hoverinfo="text",
+                    font=dict(weight=font_weights)
                 )
             )])
 
