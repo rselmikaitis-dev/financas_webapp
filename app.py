@@ -427,77 +427,7 @@ if menu == "Dashboard Principal":
                 yaxis=dict(autorange="reversed")  # mantém ordem correta
             )
 
-            from streamlit_plotly_events import plotly_events
-
-            # Mostra o gráfico e captura cliques ao mesmo tempo
-            selected_points = plotly_events(
-                fig,
-                click_event=True,
-                hover_event=False,
-                override_height=600,
-                key="heatmap_dashboard"
-            )
-            
-            if selected_points:
-                ponto = selected_points[0]
-                item = ponto["y"]   # linha (Receitas, Investimentos, etc.)
-                mes  = ponto["x"]   # coluna (Jan, Fev, ...)
-            
-                st.subheader(f"🔎 Detalhes de {item} – {mes}/{ano_sel}")
-            
-                # Converte nome do mês para número
-                meses_nomes_inv = {v: k for k, v in meses_nomes.items()}
-                mes_num = meses_nomes_inv[mes]
-                df_mes = df_ano[df_ano["Mês"] == mes_num].copy()
-            
-                # Mapeia tipo selecionado
-                tipo_map = {
-                    "Receitas": "Receita",
-                    "Investimentos": "Investimento",
-                    "Despesas Fixas": "Despesa Fixa",
-                    "Despesas Variáveis": "Despesa Variável",
-                }
-                tipo = tipo_map.get(item)
-            
-                if tipo:
-                    df_filtrado = df_mes[df_mes["tipo"] == tipo].copy()
-                    if not df_filtrado.empty:
-                        # ---------- Resumo por subcategoria ----------
-                        resumo = (
-                            df_filtrado
-                            .assign(subcategoria=df_filtrado["subcategoria"].fillna("Nenhuma"))
-                            .groupby("subcategoria", as_index=False)["value"]
-                            .sum()
-                            .sort_values("value", ascending=False)
-                        )
-                        total_val = resumo["value"].sum()
-                        resumo["% do total"] = resumo["value"] / total_val * 100 if total_val else 0
-            
-                        resumo_fmt = resumo.copy()
-                        resumo_fmt.rename(columns={"subcategoria": "Subcategoria", "value": "Valor (R$)"}, inplace=True)
-                        resumo_fmt["Valor (R$)"] = resumo_fmt["Valor (R$)"].map(brl_fmt)
-                        resumo_fmt["% do total"] = resumo_fmt["% do total"].map(lambda x: f"{x:.1f}%")
-            
-                        st.dataframe(resumo_fmt, use_container_width=True)
-            
-                        # ---------- Lançamentos individuais ----------
-                        with st.expander("📜 Ver lançamentos individuais"):
-                            df_listagem = df_filtrado[["date", "description", "value", "account", "subcategoria"]].copy()
-                            df_listagem["Valor (R$)"] = df_listagem["value"].map(brl_fmt)
-                            df_listagem["Data"] = pd.to_datetime(df_listagem["date"], errors="coerce").dt.strftime("%d/%m/%Y")
-                            df_listagem.rename(columns={
-                                "description": "Descrição",
-                                "account": "Conta",
-                                "subcategoria": "Subcategoria",
-                            }, inplace=True)
-                            st.dataframe(
-                                df_listagem[["Data", "Descrição", "Valor (R$)", "Conta", "Subcategoria"]],
-                                use_container_width=True
-                            )
-                    else:
-                        st.warning("Nenhum lançamento encontrado para esse item/mês.")
-                else:
-                    st.info("Este valor é calculado, não há lançamentos diretos.")
+            st.plotly_chart(fig, use_container_width=True)
             # ================= Detalhamento por Item/Mês (sem plugin) =================
             import plotly.express as px
             
