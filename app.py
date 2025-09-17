@@ -871,15 +871,15 @@ elif menu == "Planejamento":
     garantir_schema(conn)
 
     # 🔹 Busca dados do ano selecionado
-        df_plan = pd.read_sql_query("""
-            SELECT p.id, p.ano, p.mes, p.valor,
-                   c.nome AS categoria, s.nome AS subcategoria
-            FROM planejado p
-            JOIN subcategorias s ON p.subcategoria_id = s.id
-            JOIN categorias   c ON s.categoria_id = c.id
-            WHERE p.ano=?
-            ORDER BY p.mes, c.nome, s.nome
-        """, conn, params=(ano_sel,))
+    df_plan = pd.read_sql_query("""
+        SELECT p.id, p.ano, p.mes, p.valor,
+               c.nome AS categoria, s.nome AS subcategoria
+        FROM planejado p
+        JOIN subcategorias s ON p.subcategoria_id = s.id
+        JOIN categorias   c ON s.categoria_id = c.id
+        WHERE p.ano=?
+        ORDER BY p.mes, c.nome, s.nome
+    """, conn, params=(ano_sel,))
 
     # 🔹 Se não existir, cria linhas vazias com todas as subcategorias
     if df_plan.empty:
