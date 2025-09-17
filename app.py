@@ -866,71 +866,62 @@ elif menu == "Importação":
 elif menu == "Planejamento":
     st.header("📅 Planejamento Anual")
 
-    # 🔹 Seleção de ano
-    ano_sel = st.number_input("Ano de planejamento", min_value=2020, max_value=2100, value=date.today().year, step=1)
+    # 🔹 Seleciona o ano de planejamento
+    anos_disp = list(range(datetime.today().year, datetime.today().year + 5))
+    ano_sel = st.selectbox("Selecione o ano do planejamento", anos_disp, index=0)
 
-    # 🔹 Carregar subcategorias
-    cursor.execute("""
-        SELECT s.id, c.nome AS categoria, s.nome AS subcategoria
-        FROM subcategorias s
-        JOIN categorias c ON s.categoria_id = c.id
-        ORDER BY c.nome, s.nome
-    """)
-    subs = cursor.fetchall()
-    if not subs:
-        st.warning("⚠️ Cadastre categorias e subcategorias antes de usar o planejamento.")
-        st.stop()
+    # 🔹 Garante que tabela planejado exista
+    garantir_schema(conn)
 
-    # 🔹 Carregar planejamentos já existentes
-    df_plan = pd.read_sql_query("""
-        SELECT * FROM planejado WHERE ano=?
-    """, conn, params=(ano_sel,))
+    # 🔹 Busca dados do ano selecionado
+    df_plan = pd.read_sql_query(f"""
+        SELECT * FROM planejado WHERE ano={int(ano_sel)}
+    """, conn)
 
-    meses_nomes = {1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
-                   7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"}
+    # 🔹 Se não existir, cria linhas vazias com todas as subcategorias
+    if df_plan.empty:
+        cursor.execute("""
+            SELECT s.id AS sub_id, c.nome AS categoria, s.nome AS subcategoria, c.tipo
+            FROM subcategorias s
+            JOIN categorias c ON s.categoria_id = c.id
+            ORDER BY c.nome, s.nome
+        """)
+        rows = cursor.fetchall()
+        df_plan = pd.DataFrame(rows, columns=["sub_id", "categoria", "subcategoria", "tipo"])
+        df_plan["ano"] = ano_sel
+        df_plan["valor"] = 0.0
+        df_plan["mes"] = 1  # default janeiro
 
-    # 🔹 Monta tabela base
-    linhas = []
-    for sid, cat, sub in subs:
-        row = {"Categoria": cat, "Subcategoria": sub, "sub_id": sid}
-        for m in range(1, 13):
-            val = df_plan.query("subcategoria_id==@sid and mes==@m")["valor"]
-            row[meses_nomes[m]] = float(val.iloc[0]) if not val.empty else 0.0
-        linhas.append(row)
+    # 🔹 Exibição/editável
+    st.markdown(f"### Valores planejados para {ano_sel}")
+    df_display = df_plan.copy()
+    df_display.rename(columns={
+        "categoria": "Categoria",
+        "subcategoria": "Subcategoria",
+        "mes": "Mês",
+        "valor": "Valor"
+    }, inplace=True)
+    st.dataframe(df_display, use_container_width=True)
 
-    df_edit = pd.DataFrame(linhas)
+    # 🔹 Formulário para adicionar/editar planejado
+    st.markdown("### ✏️ Inserir / Atualizar Planejamento")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        categoria = st.text_input("Categoria")
+    with col2:
+        subcat = st.text_input("Subcategoria")
+    with col3:
+        mes = st.number_input("Mês", 1, 12, 1)
+    with col4:
+        valor = st.number_input("Valor", step=100.0)
 
-    # 🔹 Exibe em grid editável
-    gb = GridOptionsBuilder.from_dataframe(df_edit.drop(columns=["sub_id"]))
-    gb.configure_default_column(editable=True)
-    gb.configure_column("Categoria", editable=False)
-    gb.configure_column("Subcategoria", editable=False)
-    grid = AgGrid(
-        df_edit.drop(columns=["sub_id"]),
-        gridOptions=gb.build(),
-        update_mode=GridUpdateMode.VALUE_CHANGED,
-        fit_columns_on_grid_load=True,
-        theme="balham",
-        height=500
-    )
-
-    df_novo = grid["data"]
-    df_final = df_edit.copy()
-    for col in meses_nomes.values():
-        df_final[col] = df_novo[col]
-
-    # 🔹 Botão salvar
-    if st.button("💾 Salvar Planejamento"):
-        cursor.execute("DELETE FROM planejado WHERE ano=?", (ano_sel,))
-        for _, row in df_final.iterrows():
-            sid = int(df_edit.loc[df_edit["Subcategoria"] == row["Subcategoria"], "sub_id"].iloc[0])
-            for m in range(1, 13):
-                val = float(row[meses_nomes[m]]) if row[meses_nomes[m]] else 0.0
-                if val != 0:
-                    cursor.execute("""
-                        INSERT INTO planejado (ano, mes, valor, subcategoria_id)
-                        VALUES (?, ?, ?, ?)
-                    """, (ano_sel, m, val, sid))
+    if st.button("Salvar Planejamento"):
+        cursor.execute("""
+            INSERT INTO planejado (ano, mes, categoria, subcategoria, valor)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(ano, mes, categoria, subcategoria)
+            DO UPDATE SET valor=excluded.valor
+        """, (ano_sel, mes, categoria.strip(), subcat.strip(), valor))
         conn.commit()
         st.success("Planejamento salvo com sucesso!")
         st.rerun()
