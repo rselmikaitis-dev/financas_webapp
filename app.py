@@ -427,11 +427,16 @@ if menu == "Dashboard Principal":
                 yaxis=dict(autorange="reversed")  # mantém ordem correta
             )
 
-            st.plotly_chart(fig, use_container_width=True)
             from streamlit_plotly_events import plotly_events
 
-            # --- Captura clique no heatmap ---
-            selected_points = plotly_events(fig, click_event=True, hover_event=False, override_height=600)
+            # Mostra o gráfico e captura cliques ao mesmo tempo
+            selected_points = plotly_events(
+                fig,
+                click_event=True,
+                hover_event=False,
+                override_height=600,
+                key="heatmap_dashboard"
+            )
             
             if selected_points:
                 ponto = selected_points[0]
