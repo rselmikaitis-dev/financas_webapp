@@ -380,8 +380,12 @@ if menu == "Dashboard":
             import plotly.graph_objects as go
 
             # --- Heatmap base ---
+            import numpy as np
+            import plotly.graph_objects as go
+
+            # --- Heatmap base com valores reais ---
             fig = go.Figure(go.Heatmap(
-                z=np.zeros_like(Z),
+                z=Z,
                 x=cols,
                 y=items,
                 text=Text,
@@ -393,16 +397,16 @@ if menu == "Dashboard":
                     "Mês: %{x}<br>"
                     "% s/ Receita: %{customdata}<extra></extra>"
                 ),
-                colorscale=[[0, "#f9f9f9"], [1, "#dfe7ff"]],
-                showscale=False,
+                colorscale="Blues",   # escala de azul
+                showscale=True,       # exibe barra de legenda
                 xgap=2, ygap=2
             ))
-
+            
             # --- Camada Lucro/Prejuízo (verde/vermelho) ---
             lucro_idx = items.index("Lucro/Prejuízo")
             z_lucro = np.full_like(Z, np.nan, dtype=float)
             z_lucro[lucro_idx, :] = Z[lucro_idx, :]
-
+            
             fig.add_trace(go.Heatmap(
                 z=z_lucro,
                 x=cols,
@@ -420,18 +424,14 @@ if menu == "Dashboard":
                 showscale=False,
                 xgap=2, ygap=2
             ))
-
+            
             fig.update_layout(
                 margin=dict(l=0, r=0, t=10, b=0),
                 xaxis=dict(side="top"),
                 yaxis=dict(autorange="reversed")  # mantém ordem correta
             )
-
-            from streamlit_plotly_events import plotly_events
-            selected_points = plotly_events(fig, click_event=True, hover_event=False, override_height=600)
-
+            
             st.plotly_chart(fig, use_container_width=True)
-
             # =====================
             # DETALHES AO CLICAR
             # =====================
