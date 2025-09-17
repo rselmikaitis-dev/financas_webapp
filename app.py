@@ -866,65 +866,87 @@ elif menu == "Importação":
 elif menu == "Planejamento":
     st.header("📅 Planejamento Anual")
 
-    # Lê tabela de planejado
-    df_plan = pd.read_sql_query("""
-        SELECT p.id, p.ano, p.mes, p.valor,
-               c.nome AS categoria, s.nome AS subcategoria
-        FROM planejado p
-        LEFT JOIN subcategorias s ON p.subcategoria_id = s.id
-        LEFT JOIN categorias c    ON s.categoria_id   = c.id
-        ORDER BY p.ano, p.mes
-    """, conn)
+    # Tenta carregar os dados da tabela planejado
+    try:
+        df_plan = pd.read_sql_query("""
+            SELECT p.id, p.ano, p.mes, p.valor,
+                   c.nome AS categoria, s.nome AS subcategoria
+            FROM planejado p
+            LEFT JOIN subcategorias s ON p.subcategoria_id = s.id
+            LEFT JOIN categorias   c ON s.categoria_id   = c.id
+            ORDER BY p.ano, p.mes
+        """, conn)
+    except Exception:
+        df_plan = pd.DataFrame(columns=["id", "ano", "mes", "valor", "categoria", "subcategoria"])
+
+    # Nomes dos meses
+    meses_nomes = {
+        1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+        5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+        9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+    }
 
     if df_plan.empty:
         st.info("Nenhum planejamento cadastrado ainda.")
     else:
-        # Seletor de ano
-        anos_disp = sorted(df_plan["ano"].dropna().unique().astype(int).tolist())
-        ano_sel = st.selectbox("Selecione o ano", anos_disp, index=len(anos_disp)-1)
+        # Ajusta exibição
+        df_plan["Mês"] = df_plan["mes"].map(meses_nomes)
+        df_plan.rename(columns={
+            "ano": "Ano",
+            "valor": "Valor Planejado",
+            "categoria": "Categoria",
+            "subcategoria": "Subcategoria"
+        }, inplace=True)
 
-        df_ano = df_plan[df_plan["ano"] == ano_sel].copy()
-        if df_ano.empty:
-            st.warning("Nenhum planejamento para este ano.")
-        else:
-            meses_nomes = {
-                1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
-                7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"
-            }
+        # Formatar valor em R$
+        def brl_fmt(v):
+            try:
+                v = float(v)
+                return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            except:
+                return "-"
 
-            # Subcategoria (ou categoria se sub estiver vazia)
-            df_ano["Item"] = df_ano.apply(
-                lambda r: f"{r['categoria']} → {r['subcategoria']}"
-                if pd.notna(r['subcategoria']) else r['categoria'],
-                axis=1
-            )
+        df_plan["Valor Planejado"] = df_plan["Valor Planejado"].map(brl_fmt)
 
-            # Pivot: linhas = itens, colunas = meses
-            df_pivot = df_ano.pivot_table(
-                index="Item",
-                columns="mes",
-                values="valor",
-                aggfunc="sum",
-                fill_value=0
-            ).reindex(columns=range(1,13), fill_value=0)
+        st.dataframe(df_plan[["Ano", "Mês", "Categoria", "Subcategoria", "Valor Planejado"]],
+                     use_container_width=True)
 
-            # Total anual
-            df_pivot["Total Anual"] = df_pivot.sum(axis=1)
+    st.markdown("---")
 
-            # Renomeia colunas para nomes de meses
-            df_pivot.rename(columns=meses_nomes, inplace=True)
+    # 🔹 Formulário para adicionar novo planejamento
+    st.subheader("➕ Adicionar Planejamento")
 
-            # Formata valores em R$
-            df_fmt = df_pivot.applymap(
-                lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            )
+    with st.form("form_planejamento"):
+        col1, col2 = st.columns(2)
+        ano = col1.number_input("Ano", min_value=2020, max_value=2100, value=date.today().year, step=1)
+        mes = col2.selectbox("Mês", list(meses_nomes.keys()), format_func=lambda x: meses_nomes[x])
 
-            st.subheader(f"Planejamento {ano_sel}")
-            st.dataframe(df_fmt, use_container_width=True)
+        valor = st.number_input("Valor Planejado (R$)", step=100.0, format="%.2f")
 
-            # Total geral
-            total_ano = df_pivot["Total Anual"].sum()
-            st.markdown(f"**Total anual planejado: R$ {total_ano:,.2f}**")
+        # Seleção de categoria/subcategoria
+        cursor.execute("""
+            SELECT s.id, c.nome || ' → ' || s.nome
+            FROM subcategorias s
+            JOIN categorias c ON s.categoria_id = c.id
+            ORDER BY c.nome, s.nome
+        """)
+        subs_opts = cursor.fetchall()
+        subs_map = {label: sid for sid, label in subs_opts}
+
+        sub_escolhida = st.selectbox("Categoria/Subcategoria", list(subs_map.keys()))
+
+        submitted = st.form_submit_button("Salvar")
+        if submitted:
+            try:
+                cursor.execute("""
+                    INSERT INTO planejado (ano, mes, valor, subcategoria_id)
+                    VALUES (?, ?, ?, ?)
+                """, (ano, mes, valor, subs_map[sub_escolhida]))
+                conn.commit()
+                st.success("Planejamento adicionado com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar planejamento: {e}")
 # =====================
 # CONFIGURAÇÕES
 # =====================
