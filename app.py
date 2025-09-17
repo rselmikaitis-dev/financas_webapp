@@ -92,18 +92,15 @@ def garantir_schema(conn):
         )
     """)
     cursor.execute("""
+
         CREATE TABLE IF NOT EXISTS planejado (
             id INTEGER PRIMARY KEY,
-            date TEXT,
-            description TEXT,
-            value REAL,
-            account TEXT,
-            categoria_id INTEGER,
-            subcategoria_id INTEGER,
-            origem TEXT, -- "parcela_cartao", "media_despesa", "manual"
-            status TEXT DEFAULT 'previsto',
-            FOREIGN KEY (categoria_id) REFERENCES categorias(id),
-            FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
+            ano INTEGER NOT NULL,
+            mes INTEGER NOT NULL,
+            subcategoria_id INTEGER NOT NULL,
+            valor REAL DEFAULT 0,
+            UNIQUE(ano, mes, subcategoria_id),
+            FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id) ON DELETE CASCADE
         )
     """)
     conn.commit()
@@ -874,9 +871,15 @@ elif menu == "Planejamento":
     garantir_schema(conn)
 
     # 🔹 Busca dados do ano selecionado
-    df_plan = pd.read_sql_query(f"""
-        SELECT * FROM planejado WHERE ano={int(ano_sel)}
-    """, conn)
+        df_plan = pd.read_sql_query("""
+            SELECT p.id, p.ano, p.mes, p.valor,
+                   c.nome AS categoria, s.nome AS subcategoria
+            FROM planejado p
+            JOIN subcategorias s ON p.subcategoria_id = s.id
+            JOIN categorias   c ON s.categoria_id = c.id
+            WHERE p.ano=?
+            ORDER BY p.mes, c.nome, s.nome
+        """, conn, params=(ano_sel,))
 
     # 🔹 Se não existir, cria linhas vazias com todas as subcategorias
     if df_plan.empty:
