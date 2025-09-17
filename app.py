@@ -535,13 +535,12 @@ elif menu == "Dashboard Principal":
                 7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"
             }
 
-            # linhas do relatório
+            # linhas do relatório (sem saldo)
             linhas = {
                 "Receitas": [], 
                 "Investimentos": [], 
                 "Despesas Fixas": [], 
-                "Despesas Variáveis": [], 
-                "Saldo": []
+                "Despesas Variáveis": []
             }
 
             for mes in range(1, 13):
@@ -553,13 +552,22 @@ elif menu == "Dashboard Principal":
                     inv = abs(df_mes[df_mes["tipo"] == "Investimento"]["value"].sum())
                     fix = abs(df_mes[df_mes["tipo"] == "Despesa Fixa"]["value"].sum())
                     var = abs(df_mes[df_mes["tipo"] == "Despesa Variável"]["value"].sum())
-                saldo = rec - (inv + fix + var)
 
                 linhas["Receitas"].append(rec)
                 linhas["Investimentos"].append(inv)
                 linhas["Despesas Fixas"].append(fix)
                 linhas["Despesas Variáveis"].append(var)
-                linhas["Saldo"].append(saldo)
+
+            # adiciona linha Lucro/Prejuízo
+            lucro_prejuizo = [
+                linhas["Receitas"][i] - (
+                    linhas["Investimentos"][i] +
+                    linhas["Despesas Fixas"][i] +
+                    linhas["Despesas Variáveis"][i]
+                )
+                for i in range(12)
+            ]
+            linhas["Lucro/Prejuízo"] = lucro_prejuizo
 
             # monta dataframe base
             df_valores = pd.DataFrame({
@@ -596,7 +604,7 @@ elif menu == "Dashboard Principal":
                 for j, col in enumerate(cols):
                     rec = float(rec_series[col]) if col in rec_series else 0.0
                     val = float(Z[i, j])
-                    if item in ("Receitas", "Saldo") or rec == 0:
+                    if item in ("Receitas", "Lucro/Prejuízo") or rec == 0:
                         linha.append("")
                     else:
                         linha.append(f"{(val/rec*100):.1f}%")
@@ -605,10 +613,8 @@ elif menu == "Dashboard Principal":
             import numpy as np
             import plotly.graph_objects as go
 
-            # --- Heatmap base (todas as linhas em azul claro) ---
-            fig = go.Figure()
-
-            fig.add_trace(go.Heatmap(
+            # --- Heatmap base ---
+            fig = go.Figure(go.Heatmap(
                 z=np.zeros_like(Z),
                 x=cols,
                 y=items,
@@ -626,14 +632,14 @@ elif menu == "Dashboard Principal":
                 xgap=2, ygap=2
             ))
 
-            # --- Camada de saldo (verde/vermelho) ---
-            if "Saldo" in items:
-                saldo_idx = items.index("Saldo")
-                z_saldo = np.full_like(Z, np.nan, dtype=float)  # nan para esconder
-                z_saldo[saldo_idx, :] = Z[saldo_idx, :]         # só linha saldo
+            # --- Camada Lucro/Prejuízo (verde/vermelho) ---
+            if "Lucro/Prejuízo" in items:
+                lucro_idx = items.index("Lucro/Prejuízo")
+                z_lucro = np.full_like(Z, np.nan, dtype=float)
+                z_lucro[lucro_idx, :] = Z[lucro_idx, :]
 
                 fig.add_trace(go.Heatmap(
-                    z=z_saldo,
+                    z=z_lucro,
                     x=cols,
                     y=items,
                     text=Text,
