@@ -571,7 +571,7 @@ elif menu == "Dashboard Principal":
                 s = f"{abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 return ("-R$ " if v < 0 else "R$ ") + s
 
-            # --- prepara matriz para heatmap ---
+            # --- prepara matriz ---
             cols = [c for c in df_valores.columns if c != "Item"]
             items = df_valores["Item"].tolist()
 
@@ -596,23 +596,45 @@ elif menu == "Dashboard Principal":
                         linha.append(f"{(val/rec*100):.1f}%")
                 custom_pct.append(linha)
 
+            import numpy as np
             import plotly.graph_objects as go
+
+            # Criar matriz de cores personalizada: saldo verde/vermelho
+            cell_colors = np.full_like(Z, "#dfe7ff", dtype=object)  # base azul clara
+
+            saldo_idx = items.index("Saldo") if "Saldo" in items else None
+            if saldo_idx is not None:
+                for j, col in enumerate(cols):
+                    v = Z[saldo_idx, j]
+                    if v >= 0:
+                        cell_colors[saldo_idx, j] = "#d4f8d4"  # verde claro
+                    else:
+                        cell_colors[saldo_idx, j] = "#f8d4d4"  # vermelho claro
+
+            # --- Heatmap simulando tabela ---
             fig = go.Figure(go.Heatmap(
-                z=Z,
+                z=np.zeros_like(Z),        # usamos zeros só para "pintar" o grid
                 x=cols,
                 y=items,
-                text=Text,                 # o que aparece dentro da célula
+                text=Text,                 # valores R$
+                texttemplate="%{text}",
+                textfont={"size":12},
                 customdata=custom_pct,     # % para tooltip
                 hovertemplate=(
                     "Item: %{y}<br>"
                     "Mês: %{x}<br>"
-                    "Valor: %{text}<br>"
                     "% s/ Receita: %{customdata}<extra></extra>"
                 ),
-                colorscale=[[0, "#f9f9f9"], [1, "#dfe7ff"]],
+                colorscale=[[0, "#f9f9f9"], [1, "#f9f9f9"]],
                 showscale=False,
                 xgap=2, ygap=2
             ))
+
+            # Aplica as cores personalizadas
+            fig.update_traces(
+                selector=dict(type="heatmap"),
+                marker=dict(color=cell_colors)
+            )
 
             fig.update_layout(
                 margin=dict(l=0, r=0, t=10, b=0),
