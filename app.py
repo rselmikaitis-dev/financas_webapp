@@ -861,6 +861,71 @@ elif menu == "Importação":
             except Exception as e:
                 st.error(f"Erro ao processar arquivo: {e}")
 # =====================
+# PLANEJAMENTO
+# =====================
+elif menu == "Planejamento":
+    st.header("📅 Planejamento Anual")
+
+    # Lê tabela de planejado
+    df_plan = pd.read_sql_query("""
+        SELECT p.id, p.ano, p.mes, p.valor,
+               c.nome AS categoria, s.nome AS subcategoria
+        FROM planejado p
+        LEFT JOIN subcategorias s ON p.subcategoria_id = s.id
+        LEFT JOIN categorias c    ON s.categoria_id   = c.id
+        ORDER BY p.ano, p.mes
+    """, conn)
+
+    if df_plan.empty:
+        st.info("Nenhum planejamento cadastrado ainda.")
+    else:
+        # Seletor de ano
+        anos_disp = sorted(df_plan["ano"].dropna().unique().astype(int).tolist())
+        ano_sel = st.selectbox("Selecione o ano", anos_disp, index=len(anos_disp)-1)
+
+        df_ano = df_plan[df_plan["ano"] == ano_sel].copy()
+        if df_ano.empty:
+            st.warning("Nenhum planejamento para este ano.")
+        else:
+            meses_nomes = {
+                1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
+                7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"
+            }
+
+            # Subcategoria (ou categoria se sub estiver vazia)
+            df_ano["Item"] = df_ano.apply(
+                lambda r: f"{r['categoria']} → {r['subcategoria']}"
+                if pd.notna(r['subcategoria']) else r['categoria'],
+                axis=1
+            )
+
+            # Pivot: linhas = itens, colunas = meses
+            df_pivot = df_ano.pivot_table(
+                index="Item",
+                columns="mes",
+                values="valor",
+                aggfunc="sum",
+                fill_value=0
+            ).reindex(columns=range(1,13), fill_value=0)
+
+            # Total anual
+            df_pivot["Total Anual"] = df_pivot.sum(axis=1)
+
+            # Renomeia colunas para nomes de meses
+            df_pivot.rename(columns=meses_nomes, inplace=True)
+
+            # Formata valores em R$
+            df_fmt = df_pivot.applymap(
+                lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            )
+
+            st.subheader(f"Planejamento {ano_sel}")
+            st.dataframe(df_fmt, use_container_width=True)
+
+            # Total geral
+            total_ano = df_pivot["Total Anual"].sum()
+            st.markdown(f"**Total anual planejado: R$ {total_ano:,.2f}**")
+# =====================
 # CONFIGURAÇÕES
 # =====================
 elif menu == "Configurações":
