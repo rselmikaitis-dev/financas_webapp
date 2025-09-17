@@ -536,7 +536,13 @@ elif menu == "Dashboard Principal":
             }
 
             # linhas do relatório
-            linhas = { "Receitas": [], "Investimentos": [], "Despesas Fixas": [], "Despesas Variáveis": [], "Saldo": [] }
+            linhas = {
+                "Receitas": [], 
+                "Investimentos": [], 
+                "Despesas Fixas": [], 
+                "Despesas Variáveis": [], 
+                "Saldo": []
+            }
 
             for mes in range(1, 13):
                 df_mes = df_ano[df_ano["Mês"] == mes].copy()
@@ -599,42 +605,50 @@ elif menu == "Dashboard Principal":
             import numpy as np
             import plotly.graph_objects as go
 
-            # Criar matriz de cores personalizada: saldo verde/vermelho
-            cell_colors = np.full_like(Z, "#dfe7ff", dtype=object)  # base azul clara
+            # --- Heatmap base (todas as linhas em azul claro) ---
+            fig = go.Figure()
 
-            saldo_idx = items.index("Saldo") if "Saldo" in items else None
-            if saldo_idx is not None:
-                for j, col in enumerate(cols):
-                    v = Z[saldo_idx, j]
-                    if v >= 0:
-                        cell_colors[saldo_idx, j] = "#d4f8d4"  # verde claro
-                    else:
-                        cell_colors[saldo_idx, j] = "#f8d4d4"  # vermelho claro
-
-            # --- Heatmap simulando tabela ---
-            fig = go.Figure(go.Heatmap(
-                z=np.zeros_like(Z),        # usamos zeros só para "pintar" o grid
+            fig.add_trace(go.Heatmap(
+                z=np.zeros_like(Z),
                 x=cols,
                 y=items,
-                text=Text,                 # valores R$
+                text=Text,
                 texttemplate="%{text}",
                 textfont={"size":12},
-                customdata=custom_pct,     # % para tooltip
+                customdata=custom_pct,
                 hovertemplate=(
                     "Item: %{y}<br>"
                     "Mês: %{x}<br>"
                     "% s/ Receita: %{customdata}<extra></extra>"
                 ),
-                colorscale=[[0, "#f9f9f9"], [1, "#f9f9f9"]],
+                colorscale=[[0, "#f9f9f9"], [1, "#dfe7ff"]],
                 showscale=False,
                 xgap=2, ygap=2
             ))
 
-            # Aplica as cores personalizadas
-            fig.update_traces(
-                selector=dict(type="heatmap"),
-                marker=dict(color=cell_colors)
-            )
+            # --- Camada de saldo (verde/vermelho) ---
+            if "Saldo" in items:
+                saldo_idx = items.index("Saldo")
+                z_saldo = np.full_like(Z, np.nan, dtype=float)  # nan para esconder
+                z_saldo[saldo_idx, :] = Z[saldo_idx, :]         # só linha saldo
+
+                fig.add_trace(go.Heatmap(
+                    z=z_saldo,
+                    x=cols,
+                    y=items,
+                    text=Text,
+                    texttemplate="%{text}",
+                    textfont={"size":12},
+                    customdata=custom_pct,
+                    hovertemplate=(
+                        "Item: %{y}<br>"
+                        "Mês: %{x}<br>"
+                        "% s/ Receita: %{customdata}<extra></extra>"
+                    ),
+                    colorscale=[[0, "#f8d4d4"], [0.5, "#f9f9f9"], [1, "#d4f8d4"]],
+                    showscale=False,
+                    xgap=2, ygap=2
+                ))
 
             fig.update_layout(
                 margin=dict(l=0, r=0, t=10, b=0),
