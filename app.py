@@ -90,21 +90,21 @@ def garantir_schema(conn):
             FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
         )
     """)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS planejado (
-            id INTEGER PRIMARY KEY,
-            date TEXT,
-            description TEXT,
-            value REAL,
-            account TEXT,
-            categoria_id INTEGER,
-            subcategoria_id INTEGER,
-            origem TEXT,  -- "parcela_cartao", "media_despesa", "manual"
-            status TEXT DEFAULT 'previsto',
-            FOREIGN KEY (categoria_id) REFERENCES categorias(id),
-            FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
-        )
-    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS planejado (
+        id INTEGER PRIMARY KEY,
+        date TEXT,
+        description TEXT,
+        value REAL,
+        account TEXT,
+        categoria_id INTEGER,
+        subcategoria_id INTEGER,
+        origem TEXT,  -- "parcela_cartao", "media_despesa", "manual"
+        status TEXT DEFAULT 'previsto',
+        FOREIGN KEY (categoria_id) REFERENCES categorias(id),
+        FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
+    )
+""")
     conn.commit()
 
 # 🔹 Cria conexão única
