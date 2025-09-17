@@ -870,10 +870,10 @@ elif menu == "Planejamento":
     # Todas subcategorias
     df_subs = pd.read_sql_query("""
         SELECT s.id as sub_id, s.nome as subcategoria,
-               c.nome as categoria, c.tipo
+               c.nome as categoria
         FROM subcategorias s
         JOIN categorias c ON s.categoria_id = c.id
-        ORDER BY c.tipo, c.nome, s.nome
+        ORDER BY c.nome, s.nome
     """, conn)
 
     # Dados já existentes do planejado
@@ -899,7 +899,6 @@ elif menu == "Planejamento":
             ]
             linhas.append({
                 "Sub_id": row["sub_id"],
-                "Tipo": row["tipo"],
                 "Categoria": row["categoria"],
                 "Subcategoria": row["subcategoria"],
                 "Mês": meses_nomes[mes],
@@ -907,9 +906,9 @@ elif menu == "Planejamento":
             })
     df_matrix = pd.DataFrame(linhas)
 
-    # Pivotar para ter colunas de meses
+    # Pivotar para ter colunas de meses (sem Tipo)
     df_pivot = df_matrix.pivot_table(
-        index=["Sub_id", "Tipo", "Categoria", "Subcategoria"],
+        index=["Sub_id", "Categoria", "Subcategoria"],
         columns="Mês",
         values="Valor",
         aggfunc="first",
@@ -917,8 +916,11 @@ elif menu == "Planejamento":
     ).reset_index()
 
     # Ajusta ordem das colunas
-    cols_final = ["Tipo", "Categoria", "Subcategoria"] + list(meses_nomes.values())
+    cols_final = ["Categoria", "Subcategoria"] + list(meses_nomes.values())
     df_pivot = df_pivot[["Sub_id"] + cols_final]
+
+    # Ordena por Categoria e Subcategoria
+    df_pivot = df_pivot.sort_values(by=["Categoria", "Subcategoria"]).reset_index(drop=True)
 
     # Exibe tabela editável
     gb = GridOptionsBuilder.from_dataframe(df_pivot.drop(columns=["Sub_id"]))
