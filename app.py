@@ -599,15 +599,23 @@ elif menu == "Dashboard Principal":
                 df_fmt[col] = df_fmt[col].apply(brl_fmt)
 
             # === cores condicionais (saldo) ===
+            cols = list(df_valores.columns)
             fill_colors = []
-            for i, row in df_valores.iterrows():
-                if row["Item"] == "Saldo":
-                    row_colors = [
-                        "#d4f8d4" if v >= 0 else "#f8d4d4" for v in row[1:]
-                    ]
-                    fill_colors.append(["#f0f0f0"] + row_colors)  # primeira coluna cinza
-                else:
-                    fill_colors.append(["#f0f0f0"] + ["white"] * (len(row)-1))
+            for col in cols:
+                col_colors = []
+                for i, row in df_valores.iterrows():
+                    if col == "Item":
+                        col_colors.append("#f0f0f0")  # cinza na coluna de itens
+                    elif row["Item"] == "Saldo":
+                        v = row[col]
+                        try:
+                            v = float(v)
+                        except:
+                            v = 0
+                        col_colors.append("#d4f8d4" if v >= 0 else "#f8d4d4")
+                    else:
+                        col_colors.append("white")
+                fill_colors.append(col_colors)  # lista de cores por coluna
 
             # === Plotly Table ===
             import plotly.graph_objects as go
@@ -616,14 +624,13 @@ elif menu == "Dashboard Principal":
                 cells=dict(
                     values=[df_fmt[col] for col in df_fmt.columns],
                     align="center",
-                    fill_color=list(map(list, zip(*fill_colors))),  # transpor para colunas
+                    fill_color=fill_colors,  # ✅ agora correto
                     hovertext=[df_pct[col] for col in df_pct.columns],  # mostra % no hover
                     hoverinfo="text"
                 )
             )])
 
             st.plotly_chart(fig, use_container_width=True)
-
 # =====================
 # LANÇAMENTOS
 # =====================
