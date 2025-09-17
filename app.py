@@ -514,9 +514,11 @@ elif menu == "Dashboard Principal":
     if df_lanc.empty:
         st.info("Nenhum lançamento encontrado.")
     else:
+        # 🔹 seletor de ano
         anos = sorted(df_lanc["date"].dropna().astype(str).str[:4].astype(int).unique())
         ano_sel = st.selectbox("Selecione o ano", anos, index=anos.index(date.today().year))
 
+        # 🔹 prepara dados
         df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
         df_lanc["Ano"] = df_lanc["date"].dt.year
         df_lanc["Mês"] = df_lanc["date"].dt.month
@@ -525,6 +527,7 @@ elif menu == "Dashboard Principal":
         if df_ano.empty:
             st.warning("Nenhum lançamento neste ano.")
         else:
+            # ignora transferências
             df_ano = df_ano[df_ano["categoria"] != "Transferências"].copy()
 
             meses_nomes = {
@@ -532,7 +535,14 @@ elif menu == "Dashboard Principal":
                 7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"
             }
 
-            linhas = { "Receitas": [], "Investimentos": [], "Despesas Fixas": [], "Despesas Variáveis": [], "Saldo": [] }
+            # linhas do relatório
+            linhas = {
+                "Receitas": [],
+                "Investimentos": [],
+                "Despesas Fixas": [],
+                "Despesas Variáveis": [],
+                "Saldo": []
+            }
 
             for mes in range(1, 13):
                 df_mes = df_ano[df_ano["Mês"] == mes].copy()
@@ -551,17 +561,18 @@ elif menu == "Dashboard Principal":
                 linhas["Despesas Variáveis"].append(var)
                 linhas["Saldo"].append(saldo)
 
+            # monta dataframe base
             df_valores = pd.DataFrame({
                 "Item": list(linhas.keys()),
                 **{meses_nomes[m]: [linhas[k][m-1] for k in linhas] for m in range(1, 13)},
                 "Total Anual": [sum(linhas[k]) for k in linhas]
             })
 
-            # hovertext (percentuais)
+            # dataframe de percentuais (hover)
             df_pct = df_valores.copy()
             receitas = df_valores.loc[df_valores["Item"]=="Receitas"].iloc[0,1:].astype(float)
             for i, row in df_pct.iterrows():
-                if row["Item"] in ["Receitas","Saldo"]:
+                if row["Item"] in ["Receitas", "Saldo"]:
                     df_pct.loc[i, df_pct.columns[1:]] = ""
                 else:
                     for col in df_pct.columns[1:]:
@@ -573,18 +584,27 @@ elif menu == "Dashboard Principal":
                         except:
                             df_pct.at[i,col] = ""
 
+            # formata valores em R$
             def brl_fmt(v):
-                try: v = float(v)
-                except: return "-"
+                try:
+                    v = float(v)
+                except:
+                    return "-"
                 s = f"{abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                return ("-R$ " if v < 0 else "R$ ") + s
+                prefix = "-R$ " if v < 0 else "R$ "
+                return prefix + s
 
             df_fmt = df_valores.copy()
             for col in df_fmt.columns[1:]:
                 df_fmt[col] = df_fmt[col].apply(brl_fmt)
 
-            # hovertext -> lista por coluna
+            # --- Sanitizador ---
             n_rows, n_cols = df_fmt.shape
+
+            # values
+            values = [df_fmt[col].astype(str).tolist() for col in df_fmt.columns]
+
+            # hovertext
             hovertext = []
             for col in df_pct.columns:
                 col_vals = df_pct[col].astype(str).tolist()
@@ -592,10 +612,9 @@ elif menu == "Dashboard Principal":
                     col_vals.append("")
                 hovertext.append(col_vals)
 
-            # cores de fundo
-            cols = list(df_valores.columns)
+            # fill_color
             fill_colors = []
-            for col in cols:
+            for col in df_fmt.columns:
                 col_colors = []
                 for i, row in df_valores.iterrows():
                     if col == "Item":
@@ -608,13 +627,16 @@ elif menu == "Dashboard Principal":
                         col_colors.append("#d4f8d4" if v >= 0 else "#f8d4d4")
                     else:
                         col_colors.append("white")
+                while len(col_colors) < n_rows:
+                    col_colors.append("white")
                 fill_colors.append(col_colors)
 
+            # --- Plotly Table ---
             import plotly.graph_objects as go
             fig = go.Figure(data=[go.Table(
                 header=dict(values=list(df_fmt.columns), fill_color="#e0e0e0", align="center"),
                 cells=dict(
-                    values=[df_fmt[col].tolist() for col in df_fmt.columns],
+                    values=values,
                     align="center",
                     fill_color=fill_colors,
                     hovertext=hovertext,
