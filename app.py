@@ -536,13 +536,7 @@ elif menu == "Dashboard Principal":
             }
 
             # linhas do relatório
-            linhas = {
-                "Receitas": [],
-                "Investimentos": [],
-                "Despesas Fixas": [],
-                "Despesas Variáveis": [],
-                "Saldo": []
-            }
+            linhas = { "Receitas": [], "Investimentos": [], "Despesas Fixas": [], "Despesas Variáveis": [], "Saldo": [] }
 
             for mes in range(1, 13):
                 df_mes = df_ano[df_ano["Mês"] == mes].copy()
@@ -568,81 +562,62 @@ elif menu == "Dashboard Principal":
                 "Total Anual": [sum(linhas[k]) for k in linhas]
             })
 
-            # dataframe de percentuais (hover)
-            df_pct = df_valores.copy()
-            receitas = df_valores.loc[df_valores["Item"]=="Receitas"].iloc[0,1:].astype(float)
-            for i, row in df_pct.iterrows():
-                if row["Item"] in ["Receitas", "Saldo"]:
-                    df_pct.loc[i, df_pct.columns[1:]] = ""
-                else:
-                    for col in df_pct.columns[1:]:
-                        try:
-                            val = float(df_valores.at[i, col])
-                            rec = float(receitas[col])
-                            pct = (val/rec*100) if rec!=0 else 0
-                            df_pct.at[i,col] = f"{pct:.1f}%"
-                        except:
-                            df_pct.at[i,col] = ""
-
-            # formata valores em R$
+            # --- formata R$ ---
             def brl_fmt(v):
                 try:
                     v = float(v)
                 except:
                     return "-"
                 s = f"{abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                prefix = "-R$ " if v < 0 else "R$ "
-                return prefix + s
+                return ("-R$ " if v < 0 else "R$ ") + s
 
-            df_fmt = df_valores.copy()
-            for col in df_fmt.columns[1:]:
-                df_fmt[col] = df_fmt[col].apply(brl_fmt)
+            # --- prepara matriz para heatmap ---
+            cols = [c for c in df_valores.columns if c != "Item"]
+            items = df_valores["Item"].tolist()
 
-            # --- Sanitizador ---
-            n_rows, n_cols = df_fmt.shape
+            Z = df_valores[cols].astype(float).values
+            Text = df_valores[cols].applymap(brl_fmt).values
 
-            # values
-            values = [df_fmt[col].astype(str).tolist() for col in df_fmt.columns]
+            # Percentual vs Receita
+            if "Receitas" in items:
+                rec_series = df_valores.set_index("Item").loc["Receitas", cols].astype(float)
+            else:
+                rec_series = pd.Series([0]*len(cols), index=cols)
 
-            # hovertext
-            hovertext = []
-            for col in df_pct.columns:
-                col_vals = df_pct[col].astype(str).tolist()
-                while len(col_vals) < n_rows:
-                    col_vals.append("")
-                hovertext.append(col_vals)
-
-            # fill_color
-            fill_colors = []
-            for col in df_fmt.columns:
-                col_colors = []
-                for i, row in df_valores.iterrows():
-                    if col == "Item":
-                        col_colors.append("#f0f0f0")
-                    elif row["Item"] == "Saldo":
-                        try:
-                            v = float(row[col])
-                        except:
-                            v = 0
-                        col_colors.append("#d4f8d4" if v >= 0 else "#f8d4d4")
+            custom_pct = []
+            for i, item in enumerate(items):
+                linha = []
+                for j, col in enumerate(cols):
+                    rec = float(rec_series[col]) if col in rec_series else 0.0
+                    val = float(Z[i, j])
+                    if item in ("Receitas", "Saldo") or rec == 0:
+                        linha.append("")
                     else:
-                        col_colors.append("white")
-                while len(col_colors) < n_rows:
-                    col_colors.append("white")
-                fill_colors.append(col_colors)
+                        linha.append(f"{(val/rec*100):.1f}%")
+                custom_pct.append(linha)
 
-            # --- Plotly Table ---
             import plotly.graph_objects as go
-            fig = go.Figure(data=[go.Table(
-                header=dict(values=list(df_fmt.columns), fill_color="#e0e0e0", align="center"),
-                cells=dict(
-                    values=values,
-                    align="center",
-                    fill_color=fill_colors,
-                    hovertext=hovertext,
-                    hoverinfo="text"
-                )
-            )])
+            fig = go.Figure(go.Heatmap(
+                z=Z,
+                x=cols,
+                y=items,
+                text=Text,                 # o que aparece dentro da célula
+                customdata=custom_pct,     # % para tooltip
+                hovertemplate=(
+                    "Item: %{y}<br>"
+                    "Mês: %{x}<br>"
+                    "Valor: %{text}<br>"
+                    "% s/ Receita: %{customdata}<extra></extra>"
+                ),
+                colorscale=[[0, "#f9f9f9"], [1, "#dfe7ff"]],
+                showscale=False,
+                xgap=2, ygap=2
+            ))
+
+            fig.update_layout(
+                margin=dict(l=0, r=0, t=10, b=0),
+                xaxis=dict(side="top")
+            )
 
             st.plotly_chart(fig, use_container_width=True)
 # =====================
