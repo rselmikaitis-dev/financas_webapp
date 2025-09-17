@@ -709,6 +709,7 @@ elif menu == "Lançamentos":
         dfv = dfv[dfv["Mês"] == mes_num]
 
     # ----- GRID -----
+        # ----- GRID -----
     dfv_display = dfv.copy()
     dfv_display["Data"] = dfv_display["Data"].dt.strftime("%d/%m/%Y")
     cols_order = ["ID", "Data", "Descrição", "Valor", "Conta", "Categoria/Subcategoria"]
@@ -716,7 +717,7 @@ elif menu == "Lançamentos":
 
     gb = GridOptionsBuilder.from_dataframe(dfv_display)
     gb.configure_default_column(editable=False)
-    gb.configure_selection("multiple", use_checkbox=True)
+    gb.configure_selection("multiple", use_checkbox=True, header_checkbox=True)  # ✅ permite selecionar tudo
     gb.configure_column("Categoria/Subcategoria", editable=True,
                         cellEditor="agSelectCellEditor",
                         cellEditorParams={"values": list(cat_sub_map.keys())})
@@ -749,7 +750,11 @@ elif menu == "Lançamentos":
         elif isinstance(sel_obj, list):
             selected_ids = [int(r.get("ID")) for r in sel_obj if isinstance(r, dict) and r.get("ID") is not None]
 
-    st.markdown(f"**Total de lançamentos exibidos: {len(dfv_display)}**")
+    # ----- TOTAL E SOMA -----
+    soma_valores = dfv["Valor"].sum() if not dfv.empty else 0
+    st.markdown(
+        f"**Total de lançamentos exibidos: {len(dfv_display)} | Soma dos valores: R$ {soma_valores:,.2f}**"
+    )
 
     # ----- BOTÕES -----
     col1b, col2b = st.columns([1, 1])
