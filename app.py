@@ -1002,6 +1002,7 @@ elif menu == "Comparativo":
         JOIN categorias c ON s.categoria_id = c.id
         WHERE p.ano=?
     """, conn, params=(ano_sel,))
+    df_plan.rename(columns={"ano": "Ano"}, inplace=True)
 
     # ================== MERGE ==================
     df_comp = pd.merge(
