@@ -955,56 +955,76 @@ elif menu == "Planejamento":
         st.success("Planejamento salvo com sucesso!")
 
 elif menu == "Comparativo":
-    st.header("📊 Comparativo Planejado x Realizado")
+    st.header("📊 Comparativo Realizado x Planejado")
 
-    anos = sorted(df_lanc["date"].dropna().astype(str).str[:4].astype(int).unique())
-    ano_sel = st.selectbox("Selecione o ano", anos, index=anos.index(date.today().year))
+    # 🔹 Carrega lançamentos
+    df_lanc = read_table_transactions(conn)
+    if df_lanc.empty:
+        st.info("Nenhum lançamento encontrado.")
+        st.stop()
 
-    # --- Realizado por Subcategoria ---
+    # 🔹 Ajusta datas
     df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
     df_lanc["Ano"] = df_lanc["date"].dt.year
     df_lanc["Mês"] = df_lanc["date"].dt.month
 
-    df_ano = df_lanc[df_lanc["Ano"] == ano_sel].copy()
-    realizado = (
-        df_ano
-        .groupby(["categoria", "subcategoria", "Mês"], dropna=False)["value"]
-        .sum()
-        .reset_index()
-    )
-    realizado.rename(columns={"value": "Realizado"}, inplace=True)
+    # 🔹 Anos disponíveis
+    anos = sorted(df_lanc["Ano"].dropna().unique())
+    ano_sel = st.selectbox("Selecione o ano", anos, index=anos.index(date.today().year))
 
-    # --- Planejado ---
-    planejado = pd.read_sql_query("""
-        SELECT p.ano, p.mes, p.subcategoria_id, p.valor,
-               c.nome AS categoria, s.nome AS subcategoria
+    # 🔹 Filtra ano escolhido
+    df_ano = df_lanc[df_lanc["Ano"] == ano_sel].copy()
+    if df_ano.empty:
+        st.warning("Nenhum lançamento neste ano.")
+        st.stop()
+
+    # 🔹 Meses em português
+    meses_nomes = {
+        1:"Janeiro", 2:"Fevereiro", 3:"Março", 4:"Abril", 5:"Maio", 6:"Junho",
+        7:"Julho", 8:"Agosto", 9:"Setembro", 10:"Outubro", 11:"Novembro", 12:"Dezembro"
+    }
+
+    # ================== REALIZADO ==================
+    df_real = (
+        df_ano
+        .assign(Subcategoria=df_ano["subcategoria"].fillna("Nenhuma"))
+        .groupby(["Ano", "Mês", "categoria", "Subcategoria"], as_index=False)["value"]
+        .sum()
+    )
+    df_real.rename(columns={"value": "Realizado", "categoria": "Categoria"}, inplace=True)
+
+    # ================== PLANEJADO ==================
+    df_plan = pd.read_sql_query("""
+        SELECT p.ano, p.mes as Mês, p.valor as Planejado,
+               c.nome as Categoria, s.nome as Subcategoria
         FROM planejado p
         JOIN subcategorias s ON p.subcategoria_id = s.id
-        JOIN categorias c    ON s.categoria_id   = c.id
+        JOIN categorias c ON s.categoria_id = c.id
         WHERE p.ano=?
     """, conn, params=(ano_sel,))
-    planejado.rename(columns={"valor": "Planejado", "mes": "Mês"}, inplace=True)
 
-    # --- Merge ---
+    # ================== MERGE ==================
     df_comp = pd.merge(
-        planejado,
-        realizado,
-        how="outer",
-        on=["categoria", "subcategoria", "Mês"]
+        df_plan,
+        df_real,
+        how="left",
+        on=["Ano", "Mês", "Categoria", "Subcategoria"]
     )
-    df_comp["Planejado"] = df_comp["Planejado"].fillna(0)
-    df_comp["Realizado"] = df_comp["Realizado"].fillna(0)
+    df_comp["Realizado"] = df_comp["Realizado"].fillna(0.0)
     df_comp["Diferença"] = df_comp["Realizado"] - df_comp["Planejado"]
 
-    meses_nomes = {
-        1:"Jan", 2:"Fev", 3:"Mar", 4:"Abr", 5:"Mai", 6:"Jun",
-        7:"Jul", 8:"Ago", 9:"Set", 10:"Out", 11:"Nov", 12:"Dez"
-    }
+    # ================== FORMATAÇÃO ==================
     df_comp["Mês"] = df_comp["Mês"].map(meses_nomes)
+    df_show = df_comp.copy()
+    df_show["Planejado"] = df_show["Planejado"].map(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    df_show["Realizado"] = df_show["Realizado"].map(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    df_show["Diferença"] = df_show["Diferença"].map(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
-    # --- Exibição ---
-    st.dataframe(df_comp.sort_values(["categoria", "subcategoria", "Mês"]),
-                 use_container_width=True)
+    # ================== EXIBE ==================
+    st.dataframe(
+        df_show[["Mês", "Categoria", "Subcategoria", "Planejado", "Realizado", "Diferença"]],
+        use_container_width=True
+    )
 # =====================
 # CONFIGURAÇÕES
 # =====================
