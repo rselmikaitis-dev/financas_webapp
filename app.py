@@ -953,6 +953,58 @@ elif menu == "Planejamento":
                 )
         conn.commit()
         st.success("Planejamento salvo com sucesso!")
+
+elif menu == "Comparativo":
+    st.header("📊 Comparativo Planejado x Realizado")
+
+    anos = sorted(df_lanc["date"].dropna().astype(str).str[:4].astype(int).unique())
+    ano_sel = st.selectbox("Selecione o ano", anos, index=anos.index(date.today().year))
+
+    # --- Realizado por Subcategoria ---
+    df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
+    df_lanc["Ano"] = df_lanc["date"].dt.year
+    df_lanc["Mês"] = df_lanc["date"].dt.month
+
+    df_ano = df_lanc[df_lanc["Ano"] == ano_sel].copy()
+    realizado = (
+        df_ano
+        .groupby(["categoria", "subcategoria", "Mês"], dropna=False)["value"]
+        .sum()
+        .reset_index()
+    )
+    realizado.rename(columns={"value": "Realizado"}, inplace=True)
+
+    # --- Planejado ---
+    planejado = pd.read_sql_query("""
+        SELECT p.ano, p.mes, p.subcategoria_id, p.valor,
+               c.nome AS categoria, s.nome AS subcategoria
+        FROM planejado p
+        JOIN subcategorias s ON p.subcategoria_id = s.id
+        JOIN categorias c    ON s.categoria_id   = c.id
+        WHERE p.ano=?
+    """, conn, params=(ano_sel,))
+    planejado.rename(columns={"valor": "Planejado", "mes": "Mês"}, inplace=True)
+
+    # --- Merge ---
+    df_comp = pd.merge(
+        planejado,
+        realizado,
+        how="outer",
+        on=["categoria", "subcategoria", "Mês"]
+    )
+    df_comp["Planejado"] = df_comp["Planejado"].fillna(0)
+    df_comp["Realizado"] = df_comp["Realizado"].fillna(0)
+    df_comp["Diferença"] = df_comp["Realizado"] - df_comp["Planejado"]
+
+    meses_nomes = {
+        1:"Jan", 2:"Fev", 3:"Mar", 4:"Abr", 5:"Mai", 6:"Jun",
+        7:"Jul", 8:"Ago", 9:"Set", 10:"Out", 11:"Nov", 12:"Dez"
+    }
+    df_comp["Mês"] = df_comp["Mês"].map(meses_nomes)
+
+    # --- Exibição ---
+    st.dataframe(df_comp.sort_values(["categoria", "subcategoria", "Mês"]),
+                 use_container_width=True)
 # =====================
 # CONFIGURAÇÕES
 # =====================
