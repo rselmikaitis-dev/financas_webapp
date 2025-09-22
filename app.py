@@ -49,15 +49,12 @@ with logout_col:
         st.rerun()
 
 import os
-
 # =====================
 # BANCO DE DADOS
 # =====================
 
 def garantir_schema(conn):
     cursor = conn.cursor()
-
-    # --- Tabelas base ---
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS contas (
             id INTEGER PRIMARY KEY,
@@ -81,8 +78,17 @@ def garantir_schema(conn):
             FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE CASCADE
         )
     """)
-
-    # Cria tabela transactions se ainda não existir (sem supor colunas novas)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS planejado (
+            id INTEGER PRIMARY KEY,
+            ano INTEGER NOT NULL,
+            mes INTEGER NOT NULL,
+            subcategoria_id INTEGER NOT NULL,
+            valor REAL DEFAULT 0,
+            UNIQUE(ano, mes, subcategoria_id),
+            FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id) ON DELETE CASCADE
+        )
+    """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY,
@@ -92,38 +98,26 @@ def garantir_schema(conn):
             account TEXT,
             subcategoria_id INTEGER,
             status TEXT DEFAULT 'final',
+            parcela_atual INTEGER DEFAULT 1,
+            parcelas_totais INTEGER DEFAULT 1,
             FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
         )
     """)
-
-    # Planejado
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS planejado (
-            id INTEGER PRIMARY KEY,
-            ano INTEGER NOT NULL,
-            mes INTEGER NOT NULL,
-            subcategoria_id INTEGER NOT NULL,
-            valor REAL DEFAULT 0,
-            UNIQUE(ano, mes, subcategoria_id),
-            FOREIGN KEY (subcategoria_id) REFERENCES subcategororias(id) ON DELETE CASCADE
-        )
-    """.replace("subcategororias", "subcategorias"))  # só pra evitar typo
-
-    # --- Migração de schema: adiciona colunas se faltarem ---
-    def _has_col(table: str, col: str) -> bool:
-        cursor.execute(f"PRAGMA table_info({table})")
-        return any(r[1] == col for r in cursor.fetchall())
-
-    if not _has_col("transactions", "parcela_atual"):
-        cursor.execute("ALTER TABLE transactions ADD COLUMN parcela_atual INTEGER DEFAULT 1")
-    if not _has_col("transactions", "parcelas_totais"):
-        cursor.execute("ALTER TABLE transactions ADD COLUMN parcelas_totais INTEGER DEFAULT 1")
-
-    # Backfill de NULLs (caso existam linhas antigas)
-    cursor.execute("UPDATE transactions SET parcela_atual=1 WHERE parcela_atual IS NULL")
-    cursor.execute("UPDATE transactions SET parcelas_totais=1 WHERE parcelas_totais IS NULL")
-
     conn.commit()
+
+# 🔹 Cria conexão única
+if "conn" not in st.session_state or st.session_state.conn is None:
+    conn = sqlite3.connect("data.db", check_same_thread=False)
+    st.session_state.conn = conn
+else:
+    conn = st.session_state.conn
+
+# 🔹 Garante que tabelas e colunas existam
+garantir_schema(conn)
+
+# 🔹 Cursor pronto
+cursor = conn.cursor()
+
 # =====================
 # HELPERS
 # =====================
