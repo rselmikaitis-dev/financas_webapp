@@ -755,13 +755,13 @@ elif menu == "Importação":
 
                     # ---------- PRÉ-VISUALIZAÇÃO ----------
                     st.subheader("Pré-visualização")
-                    
+
                     # 🔹 histórico de classificações já feitas
                     hist = _build_hist_similaridade(conn, conta_sel)
-                    
+
                     df_preview = df.copy()
                     df_preview["Conta destino"] = conta_sel
-                    
+
                     # Se for cartão → ajusta data
                     if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
                         from calendar import monthrange
@@ -783,17 +783,17 @@ elif menu == "Importação":
                             if m:
                                 return int(m.group(1)), int(m.group(2))
                         return None, None
-                    
+
                     parcelas_atuais, parcelas_totais = [], []
                     for _, r in df_preview.iterrows():
                         p_atual, p_total = detectar_parcela(str(r["Descrição"]))
                         parcelas_atuais.append(p_atual if p_atual else 1)
                         parcelas_totais.append(p_total if p_total else 1)
-                    
+
                     df_preview["Parcela atual"] = parcelas_atuais
                     df_preview["Parcelas totais"] = parcelas_totais
                     df_preview["Parcelado?"] = [p > 1 for p in parcelas_totais]
-                    
+
                     # 🔹 tenta sugerir categoria/subcategoria
                     sugestoes, sub_ids = [], []
                     for _, r in df_preview.iterrows():
@@ -806,30 +806,21 @@ elif menu == "Importação":
                         sub_id, label, score = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
                         sugestoes.append(label if sub_id else "Nenhuma")
                         sub_ids.append(sub_id)
-                    
+
                     df_preview["Sugestão Categoria/Sub"] = sugestoes
                     df_preview["sub_id_sugerido"] = sub_ids
 
-                    # 🔹 verifica duplicados já no banco
+                    # 🔹 checa duplicidade
                     duplicados = []
                     for _, r in df_preview.iterrows():
-                        # Define data para checagem
-                        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-                            from calendar import monthrange
-                            dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
-                            dt_check = date(ano_ref_cc, mes_ref_cc, dia_final).strftime("%Y-%m-%d")
-                        else:
-                            dt_check = r["Data"].strftime("%Y-%m-%d") if isinstance(r["Data"], date) else None
-
-                        existe = cursor.execute("""
+                        cursor.execute("""
                             SELECT 1 FROM transactions
                              WHERE date=? AND description=? AND value=? AND account=?
-                        """, (dt_check, r["Descrição"], r["Valor"], conta_sel)).fetchone()
-                        duplicados.append(bool(existe))
+                        """, (str(r["Data"]), str(r["Descrição"]), float(r["Valor"] or 0), conta_sel))
+                        duplicados.append(cursor.fetchone() is not None)
+                    df_preview["Já existe?"] = duplicados
 
-                    df_preview["Duplicado?"] = duplicados
-
-                    # Exibe preview editável
+                    # Exibe preview editável com AgGrid
                     gb = GridOptionsBuilder.from_dataframe(df_preview)
                     gb.configure_default_column(editable=True)
                     gb.configure_column("Parcelado?", editable=True, cellEditor="agSelectCellEditor",
@@ -850,8 +841,33 @@ elif menu == "Importação":
                         from calendar import monthrange
                         inserted = 0
 
+                        # Garante categoria "Estorno" e subcategoria "Cartão de Crédito"
+                        cursor.execute("SELECT id FROM categorias WHERE nome=?", ("Estorno",))
+                        row = cursor.fetchone()
+                        if row:
+                            estorno_cat_id = row[0]
+                        else:
+                            cursor.execute("INSERT INTO categorias (nome, tipo) VALUES (?, ?)", ("Estorno", "Neutra"))
+                            estorno_cat_id = cursor.lastrowid
+
+                        cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", ("Cartão de Crédito", estorno_cat_id))
+                        row = cursor.fetchone()
+                        if row:
+                            estorno_sub_id = row[0]
+                        else:
+                            cursor.execute(
+                                "INSERT INTO subcategorias (categoria_id, nome) VALUES (?, ?)",
+                                (estorno_cat_id, "Cartão de Crédito")
+                            )
+                            estorno_sub_id = cursor.lastrowid
+
+                        conn.commit()
+
+                        hist = _build_hist_similaridade(conn, conta_sel)
+
+                        # Loop de lançamentos
                         for _, r in df_preview_editado.iterrows():
-                            if r["Duplicado?"]:
+                            if r.get("Já existe?"):
                                 continue  # ignora duplicados
 
                             desc = str(r["Descrição"])
@@ -859,25 +875,24 @@ elif menu == "Importação":
                             if val is None:
                                 continue
 
-                            # Data final
+                            # Data
                             if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
                                 dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                                 dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
                                 if val > 0:
                                     val = -abs(val)
+                                    sub_id, _, _ = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
                                 else:
                                     val = abs(val)
+                                    sub_id = estorno_sub_id
                             else:
                                 dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
                                 if not isinstance(dt_obj, date):
                                     continue
+                                sub_id = r.get("sub_id_sugerido", None)
 
-                            # Usa subcategoria sugerida
-                            sub_id = r.get("sub_id_sugerido", None)
-
-                            # Parcelas
-                            parcela_atual = int(r.get("Parcela atual", 1))
-                            parcelas_totais = int(r.get("Parcelas totais", 1))
+                            parcela_atual = int(r.get("Parcela atual", 1) or 1)
+                            parcelas_totais = int(r.get("Parcelas totais", 1) or 1)
 
                             cursor.execute("""
                                 INSERT INTO transactions 
@@ -897,6 +912,9 @@ elif menu == "Importação":
                         conn.commit()
                         st.success(f"{inserted} lançamentos importados com sucesso!")
                         st.rerun()
+
+            except Exception as e:
+                st.error(f"Erro ao processar arquivo: {e}")
 
 # =====================
 # PLANEJAMENTO
