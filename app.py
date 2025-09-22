@@ -1399,7 +1399,7 @@ elif menu == "Configurações":
                         st.error("Já existe essa subcategoria")
         with tab5:
             st.subheader("🛠️ SQL Console (avançado)")
-        
+            
             query = st.text_area("Digite sua consulta SQL (somente SELECT):", height=120)
         
             if st.button("Executar consulta"):
@@ -1414,3 +1414,47 @@ elif menu == "Configurações":
                             st.dataframe(df_query, use_container_width=True)
                     except Exception as e:
                         st.error(f"Erro ao executar: {e}")
+        
+            st.markdown("---")
+            st.subheader("📌 Parcelas Futuras")
+        
+            if st.button("Gerar parcelas futuras"):
+                from dateutil.relativedelta import relativedelta
+                cursor = conn.cursor()
+        
+                lançamentos = cursor.execute("""
+                    SELECT id, date, description, value, account, subcategoria_id, parcela_atual, parcelas_totais
+                    FROM transactions
+                    WHERE parcelas_totais > 1
+                    ORDER BY account, description, parcela_atual
+                """).fetchall()
+        
+                inseridos = 0
+                for row in lançamentos:
+                    id_, dt_str, desc, val, conta, sub_id, p_atual, p_total = row
+                    try:
+                        dt_base = datetime.strptime(dt_str, "%Y-%m-%d").date()
+                    except Exception:
+                        continue
+        
+                    # só gera se for a 1ª parcela
+                    if p_atual != 1:
+                        continue
+        
+                    for p in range(2, p_total + 1):
+                        nova_data = dt_base + relativedelta(months=(p-1))
+                        cursor.execute("""
+                            SELECT 1 FROM transactions
+                            WHERE description=? AND value=? AND account=? AND parcela_atual=? AND parcelas_totais=? AND date=?
+                        """, (desc, val, conta, p, p_total, nova_data.strftime("%Y-%m-%d")))
+                        if cursor.fetchone():
+                            continue  # já existe
+        
+                        cursor.execute("""
+                            INSERT INTO transactions (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
+                            VALUES (?, ?, ?, ?, ?, 'final', ?, ?)
+                        """, (nova_data.strftime("%Y-%m-%d"), desc, val, conta, sub_id, p, p_total))
+                        inseridos += 1
+        
+                conn.commit()
+                st.success(f"{inseridos} parcelas futuras geradas com sucesso!")
