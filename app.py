@@ -1001,20 +1001,15 @@ elif menu == "Importação":
 # =====================
 # PLANEJAMENTO (visão mensal)
 # =====================
+# =====================
+# PLANEJAMENTO
+# =====================
 elif menu == "Planejamento":
-    st.header("📅 Planejamento Mensal")
+    st.header("📅 Planejamento Anual")
 
-    # Selecionar ano e mês
+    # Selecionar ano
     anos = list(range(2020, datetime.today().year + 5))
     ano_sel = st.selectbox("Ano do planejamento", anos, index=anos.index(date.today().year))
-
-    meses_nomes = {
-        1:"Janeiro", 2:"Fevereiro", 3:"Março", 4:"Abril", 5:"Maio", 6:"Junho",
-        7:"Julho", 8:"Agosto", 9:"Setembro", 10:"Outubro", 11:"Novembro", 12:"Dezembro"
-    }
-    mes_sel = st.selectbox("Mês do planejamento", list(meses_nomes.keys()), 
-                           format_func=lambda x: meses_nomes[x],
-                           index=date.today().month-1)
 
     # Todas subcategorias
     df_subs = pd.read_sql_query("""
@@ -1025,50 +1020,87 @@ elif menu == "Planejamento":
         ORDER BY c.nome, s.nome
     """, conn)
 
-    # Dados planejados existentes
+    # Dados já existentes do planejado
     df_plan = pd.read_sql_query("""
         SELECT ano, mes, subcategoria_id, valor
         FROM planejado
-        WHERE ano=? AND mes=?
-    """, conn, params=(ano_sel, mes_sel))
+        WHERE ano=?
+    """, conn, params=(ano_sel,))
 
-    # Parcelados (transactions com parcelas futuras)
-    df_parcelado = pd.read_sql_query("""
-        SELECT subcategoria_id, SUM(value) as valor
+    # Média dos últimos 6 meses de cada subcategoria
+    from dateutil.relativedelta import relativedelta
+    hoje = date.today()
+    inicio_ref = hoje - relativedelta(months=6)
+
+    df_hist = pd.read_sql_query("""
+        SELECT subcategoria_id, value, date
         FROM transactions
-        WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?
-          AND parcelas_totais > 1
-        GROUP BY subcategoria_id
-    """, conn, params=(str(ano_sel), f"{mes_sel:02d}"))
+        WHERE date >= ?
+    """, conn, params=(inicio_ref.strftime("%Y-%m-%d"),))
 
-    # Monta base
+    df_hist["date"] = pd.to_datetime(df_hist["date"], errors="coerce")
+    df_hist = df_hist.dropna(subset=["date"])
+
+    df_media = (
+        df_hist.groupby("subcategoria_id")["value"]
+        .mean()
+        .reset_index()
+        .rename(columns={"value": "media_6m"})
+    )
+
+    # Meses
+    meses_nomes = {
+        1:"Janeiro", 2:"Fevereiro", 3:"Março", 4:"Abril", 5:"Maio", 6:"Junho",
+        7:"Julho", 8:"Agosto", 9:"Setembro", 10:"Outubro", 11:"Novembro", 12:"Dezembro"
+    }
+
+    # Monta base completa (todas subcategorias × meses)
     linhas = []
     for _, row in df_subs.iterrows():
         sub_id = row["sub_id"]
-        val_plan = df_plan.loc[df_plan["subcategoria_id"] == sub_id, "valor"]
-        val_plan = float(val_plan.iloc[0]) if not val_plan.empty else 0.0
 
-        val_parc = df_parcelado.loc[df_parcelado["subcategoria_id"] == sub_id, "valor"]
-        val_parc = float(val_parc.iloc[0]) if not val_parc.empty else 0.0
+        # busca média histórica (6m)
+        val_media = df_media.loc[df_media["subcategoria_id"] == sub_id, "media_6m"]
+        val_media = float(val_media.iloc[0]) if not val_media.empty else 0.0
 
-        linhas.append({
-            "Sub_id": sub_id,
-            "Categoria": row["categoria"],
-            "Subcategoria": row["subcategoria"],
-            "Planejado": val_plan,
-            "Parcelado": val_parc,
-            "Total": val_plan + val_parc
-        })
+        for mes in range(1, 13):
+            val_plan = df_plan.loc[
+                (df_plan["subcategoria_id"] == sub_id) &
+                (df_plan["mes"] == mes), "valor"
+            ]
+            # Se já existir no planejado, usa; senão usa média
+            val_final = float(val_plan.iloc[0]) if not val_plan.empty else val_media
+
+            linhas.append({
+                "Sub_id": sub_id,
+                "Categoria": row["categoria"],
+                "Subcategoria": row["subcategoria"],
+                "Mês": meses_nomes[mes],
+                "Valor": val_final
+            })
     df_matrix = pd.DataFrame(linhas)
 
-    # Exibe tabela editável (Planejado)
-    from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
+    # Pivotar para ter colunas de meses (sem Tipo)
+    df_pivot = df_matrix.pivot_table(
+        index=["Sub_id", "Categoria", "Subcategoria"],
+        columns="Mês",
+        values="Valor",
+        aggfunc="first",
+        fill_value=0
+    ).reset_index()
 
-    gb = GridOptionsBuilder.from_dataframe(df_matrix.drop(columns=["Sub_id"]))
-    gb.configure_default_column(editable=False, resizable=True)
-    gb.configure_column("Planejado", editable=True)
+    # Ajusta ordem das colunas
+    cols_final = ["Categoria", "Subcategoria"] + list(meses_nomes.values())
+    df_pivot = df_pivot[["Sub_id"] + cols_final]
+
+    # Ordena por Categoria e Subcategoria
+    df_pivot = df_pivot.sort_values(by=["Categoria", "Subcategoria"]).reset_index(drop=True)
+
+    # Exibe tabela editável
+    gb = GridOptionsBuilder.from_dataframe(df_pivot.drop(columns=["Sub_id"]))
+    gb.configure_default_column(editable=True, resizable=True)
     grid = AgGrid(
-        df_matrix.drop(columns=["Sub_id"]),
+        df_pivot.drop(columns=["Sub_id"]),
         gridOptions=gb.build(),
         update_mode=GridUpdateMode.VALUE_CHANGED,
         data_return_mode="AS_INPUT",
@@ -1081,17 +1113,18 @@ elif menu == "Planejamento":
 
     # Botão para salvar
     if st.button("💾 Salvar planejamento"):
-        cursor.execute("DELETE FROM planejado WHERE ano=? AND mes=?", (ano_sel, mes_sel))
+        cursor.execute("DELETE FROM planejado WHERE ano=?", (ano_sel,))
         for _, row in df_editado.iterrows():
-            sub_id = int(df_matrix.loc[df_matrix["Subcategoria"] == row["Subcategoria"], "Sub_id"].iloc[0])
-            try:
-                val = float(row["Planejado"]) if row["Planejado"] not in (None, "", "NaN") else 0.0
-            except Exception:
-                val = 0.0
-            cursor.execute(
-                "INSERT INTO planejado (ano, mes, subcategoria_id, valor) VALUES (?, ?, ?, ?)",
-                (ano_sel, mes_sel, sub_id, val)
-            )
+            sub_id = int(df_pivot.loc[df_pivot["Subcategoria"] == row["Subcategoria"], "Sub_id"].iloc[0])
+            for i, mes_nome in enumerate(meses_nomes.values(), start=1):
+                try:
+                    val = float(row[mes_nome]) if row[mes_nome] not in (None, "", "NaN") else 0.0
+                except Exception:
+                    val = 0.0
+                cursor.execute(
+                    "INSERT INTO planejado (ano, mes, subcategoria_id, valor) VALUES (?, ?, ?, ?)",
+                    (ano_sel, i, sub_id, val)
+                )
         conn.commit()
         st.success("Planejamento salvo com sucesso!")
 # =====================
