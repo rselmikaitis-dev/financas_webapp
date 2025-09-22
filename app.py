@@ -957,6 +957,9 @@ elif menu == "Importação":
                         conn.commit()
                         st.success(f"{inserted} lançamentos importados com sucesso!")
                         st.rerun()
+              except Exception as e:
+    st.error(f"Erro ao processar arquivo: {e}")
+
 # =====================
 # PLANEJAMENTO
 # =====================
