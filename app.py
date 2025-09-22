@@ -1024,6 +1024,21 @@ elif menu == "Planejamento":
         WHERE ano=?
     """, conn, params=(ano_sel,))
 
+    # Parcelado (transactions já replicadas no futuro)
+    df_parcelado = pd.read_sql_query("""
+        SELECT strftime('%Y', date) as ano,
+               strftime('%m', date) as mes,
+               subcategoria_id,
+               SUM(value) as valor
+        FROM transactions
+        WHERE parcelas_totais > 1
+          AND CAST(strftime('%Y', date) AS INT) = ?
+        GROUP BY ano, mes, subcategoria_id
+    """, conn, params=(ano_sel,))
+
+    df_parcelado["ano"] = df_parcelado["ano"].astype(int)
+    df_parcelado["mes"] = df_parcelado["mes"].astype(int)
+
     # Meses
     meses_nomes = {
         1:"Janeiro", 2:"Fevereiro", 3:"Março", 4:"Abril", 5:"Maio", 6:"Junho",
@@ -1034,38 +1049,54 @@ elif menu == "Planejamento":
     linhas = []
     for _, row in df_subs.iterrows():
         for mes in range(1, 13):
-            val = df_plan.loc[
+            # planejado
+            val_plan = df_plan.loc[
                 (df_plan["subcategoria_id"] == row["sub_id"]) &
                 (df_plan["mes"] == mes), "valor"
             ]
+            val_plan = float(val_plan.iloc[0]) if not val_plan.empty else 0.0
+
+            # parcelado
+            val_parc = df_parcelado.loc[
+                (df_parcelado["subcategoria_id"] == row["sub_id"]) &
+                (df_parcelado["mes"] == mes), "valor"
+            ]
+            val_parc = float(val_parc.iloc[0]) if not val_parc.empty else 0.0
+
             linhas.append({
                 "Sub_id": row["sub_id"],
                 "Categoria": row["categoria"],
                 "Subcategoria": row["subcategoria"],
                 "Mês": meses_nomes[mes],
-                "Valor": float(val.iloc[0]) if not val.empty else 0.0
+                "Planejado": val_plan,
+                "Parcelado": val_parc,
+                "Total": val_plan + val_parc
             })
     df_matrix = pd.DataFrame(linhas)
 
-    # Pivotar para ter colunas de meses (sem Tipo)
+    # Pivotar para colunas de meses
     df_pivot = df_matrix.pivot_table(
         index=["Sub_id", "Categoria", "Subcategoria"],
         columns="Mês",
-        values="Valor",
+        values=["Planejado", "Parcelado", "Total"],
         aggfunc="first",
         fill_value=0
-    ).reset_index()
+    )
 
-    # Ajusta ordem das colunas
-    cols_final = ["Categoria", "Subcategoria"] + list(meses_nomes.values())
-    df_pivot = df_pivot[["Sub_id"] + cols_final]
+    # Flatten no MultiIndex
+    df_pivot.columns = [f"{a}_{b}" for a, b in df_pivot.columns]
+    df_pivot = df_pivot.reset_index()
 
-    # Ordena por Categoria e Subcategoria
+    # Ordena
     df_pivot = df_pivot.sort_values(by=["Categoria", "Subcategoria"]).reset_index(drop=True)
 
-    # Exibe tabela editável
+    # Exibe tabela editável → apenas Planejado pode ser editado
+    cols_edit = [c for c in df_pivot.columns if c.startswith("Planejado_")]
     gb = GridOptionsBuilder.from_dataframe(df_pivot.drop(columns=["Sub_id"]))
-    gb.configure_default_column(editable=True, resizable=True)
+    gb.configure_default_column(editable=False, resizable=True)
+    for col in cols_edit:
+        gb.configure_column(col, editable=True)
+
     grid = AgGrid(
         df_pivot.drop(columns=["Sub_id"]),
         gridOptions=gb.build(),
@@ -1078,14 +1109,15 @@ elif menu == "Planejamento":
 
     df_editado = pd.DataFrame(grid["data"])
 
-    # Botão para salvar
+    # Botão para salvar apenas Planejado
     if st.button("💾 Salvar planejamento"):
         cursor.execute("DELETE FROM planejado WHERE ano=?", (ano_sel,))
         for _, row in df_editado.iterrows():
             sub_id = int(df_pivot.loc[df_pivot["Subcategoria"] == row["Subcategoria"], "Sub_id"].iloc[0])
             for i, mes_nome in enumerate(meses_nomes.values(), start=1):
+                colname = f"Planejado_{mes_nome}"
                 try:
-                    val = float(row[mes_nome]) if row[mes_nome] not in (None, "", "NaN") else 0.0
+                    val = float(row[colname]) if row[colname] not in (None, "", "NaN") else 0.0
                 except Exception:
                     val = 0.0
                 cursor.execute(
@@ -1094,79 +1126,6 @@ elif menu == "Planejamento":
                 )
         conn.commit()
         st.success("Planejamento salvo com sucesso!")
-
-elif menu == "Comparativo":
-    st.header("📊 Comparativo Realizado x Planejado")
-
-    # 🔹 Carrega lançamentos
-    df_lanc = read_table_transactions(conn)
-    if df_lanc.empty:
-        st.info("Nenhum lançamento encontrado.")
-        st.stop()
-
-    # 🔹 Ajusta datas
-    df_lanc["date"] = pd.to_datetime(df_lanc["date"], errors="coerce")
-    df_lanc["Ano"] = df_lanc["date"].dt.year
-    df_lanc["Mês"] = df_lanc["date"].dt.month
-
-    # 🔹 Anos disponíveis
-    anos = sorted(df_lanc["Ano"].dropna().unique())
-    ano_sel = st.selectbox("Selecione o ano", anos, index=anos.index(date.today().year))
-
-    # 🔹 Filtra ano escolhido
-    df_ano = df_lanc[df_lanc["Ano"] == ano_sel].copy()
-    if df_ano.empty:
-        st.warning("Nenhum lançamento neste ano.")
-        st.stop()
-
-    # 🔹 Meses em português
-    meses_nomes = {
-        1:"Janeiro", 2:"Fevereiro", 3:"Março", 4:"Abril", 5:"Maio", 6:"Junho",
-        7:"Julho", 8:"Agosto", 9:"Setembro", 10:"Outubro", 11:"Novembro", 12:"Dezembro"
-    }
-
-    # ================== REALIZADO ==================
-    df_real = (
-        df_ano
-        .assign(Subcategoria=df_ano["subcategoria"].fillna("Nenhuma"))
-        .groupby(["Ano", "Mês", "categoria", "Subcategoria"], as_index=False)["value"]
-        .sum()
-    )
-    df_real.rename(columns={"value": "Realizado", "categoria": "Categoria"}, inplace=True)
-
-    # ================== PLANEJADO ==================
-    df_plan = pd.read_sql_query("""
-        SELECT p.ano, p.mes as Mês, p.valor as Planejado,
-               c.nome as Categoria, s.nome as Subcategoria
-        FROM planejado p
-        JOIN subcategorias s ON p.subcategoria_id = s.id
-        JOIN categorias c ON s.categoria_id = c.id
-        WHERE p.ano=?
-    """, conn, params=(ano_sel,))
-    df_plan.rename(columns={"ano": "Ano"}, inplace=True)
-
-    # ================== MERGE ==================
-    df_comp = pd.merge(
-        df_plan,
-        df_real,
-        how="left",
-        on=["Ano", "Mês", "Categoria", "Subcategoria"]
-    )
-    df_comp["Realizado"] = df_comp["Realizado"].fillna(0.0)
-    df_comp["Diferença"] = df_comp["Realizado"] - df_comp["Planejado"]
-
-    # ================== FORMATAÇÃO ==================
-    df_comp["Mês"] = df_comp["Mês"].map(meses_nomes)
-    df_show = df_comp.copy()
-    df_show["Planejado"] = df_show["Planejado"].map(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-    df_show["Realizado"] = df_show["Realizado"].map(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-    df_show["Diferença"] = df_show["Diferença"].map(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-
-    # ================== EXIBE ==================
-    st.dataframe(
-        df_show[["Mês", "Categoria", "Subcategoria", "Planejado", "Realizado", "Diferença"]],
-        use_container_width=True
-    )
 # =====================
 # CONFIGURAÇÕES
 # =====================
