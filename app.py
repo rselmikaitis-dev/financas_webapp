@@ -732,7 +732,7 @@ elif menu == "Importação":
             try:
                 df = _read_uploaded(arquivo)
                 df.columns = [c.strip().lower().replace("\ufeff", "") for c in df.columns]
-
+        
                 mapa_colunas = {
                     "data": ["data","data lançamento","data lancamento","dt","lançamento","data mov","data movimento"],
                     "descrição": ["descrição","descricao","historico","histórico","detalhe","descricao/historico","lançamento"],
@@ -744,27 +744,27 @@ elif menu == "Importação":
                         if p in df.columns:
                             col_map[alvo] = p
                             break
-
+        
                 if "data" not in col_map or "valor" not in col_map:
                     st.error(f"Arquivo inválido. Colunas lidas: {list(df.columns)}")
                 else:
                     if "descrição" not in col_map:
                         df["descrição"] = ""
                         col_map["descrição"] = "descrição"
-
+        
                     df = df.rename(columns={
                         col_map["data"]: "Data",
                         col_map["descrição"]: "Descrição",
                         col_map["valor"]: "Valor"
                     })
-
+        
                     # Remove linhas de saldo
                     df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
-
+        
                     # Conversões
                     df["Data"] = df["Data"].apply(parse_date)
                     df["Valor"] = df["Valor"].apply(parse_money)
-
+        
                     # ---------- PRÉ-VISUALIZAÇÃO ----------
                     st.subheader("Pré-visualização")
                     
@@ -780,8 +780,8 @@ elif menu == "Importação":
                         dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                         dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
                         df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
-                    
-                    # Detecta parcelas automáticas no texto
+        
+                    # Detecta parcelas
                     def detectar_parcela(desc: str):
                         import re
                         padroes = [
@@ -794,16 +794,29 @@ elif menu == "Importação":
                                 return int(m.group(1)), int(m.group(2))
                         return None, None
                     
-                    parcelas_atuais, parcelas_totais = [], []
+                    parcelas_atuais, parcelas_totais, ja_existe = [], [], []
                     for _, r in df_preview.iterrows():
                         p_atual, p_total = detectar_parcela(str(r["Descrição"]))
                         parcelas_atuais.append(p_atual if p_atual else 1)
                         parcelas_totais.append(p_total if p_total else 1)
-                    
+        
+                        # 🔍 checa duplicidade no banco
+                        cursor.execute("""
+                            SELECT 1 FROM transactions 
+                            WHERE date=? AND description=? AND value=? AND account=?
+                        """, (
+                            r["Data"].strftime("%Y-%m-%d") if isinstance(r["Data"], date) else str(r["Data"]),
+                            str(r["Descrição"]),
+                            float(r["Valor"]) if pd.notna(r["Valor"]) else None,
+                            conta_sel
+                        ))
+                        ja_existe.append("✅ Sim" if cursor.fetchone() else "❌ Não")
+        
                     df_preview["Parcela atual"] = parcelas_atuais
                     df_preview["Parcelas totais"] = parcelas_totais
                     df_preview["Parcelado?"] = [p > 1 for p in parcelas_totais]
-                    
+                    df_preview["Já existe?"] = ja_existe
+        
                     # 🔹 tenta sugerir categoria/subcategoria
                     sugestoes = []
                     for _, r in df_preview.iterrows():
@@ -817,7 +830,7 @@ elif menu == "Importação":
                     
                     df_preview["Sugestão Categoria/Sub"] = sugestoes
                     
-                    # Exibe preview editável com AgGrid
+                    # Exibe preview editável
                     gb = GridOptionsBuilder.from_dataframe(df_preview)
                     gb.configure_default_column(editable=True)
                     gb.configure_column("Parcelado?", editable=True, cellEditor="agSelectCellEditor",
@@ -832,87 +845,56 @@ elif menu == "Importação":
                         height=400
                     )
                     df_preview_editado = pd.DataFrame(grid["data"])
-
+        
                     # ---------- IMPORTAR ----------
                     if st.button("Importar lançamentos"):
                         from calendar import monthrange
                         inserted = 0
-
-                        # Garante categoria "Estorno" e subcategoria "Cartão de Crédito"
-                        cursor.execute("SELECT id FROM categorias WHERE nome=?", ("Estorno",))
-                        row = cursor.fetchone()
-                        if row:
-                            estorno_cat_id = row[0]
-                        else:
-                            cursor.execute("INSERT INTO categorias (nome, tipo) VALUES (?, ?)", ("Estorno", "Neutra"))
-                            estorno_cat_id = cursor.lastrowid
-
-                        cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", ("Cartão de Crédito", estorno_cat_id))
-                        row = cursor.fetchone()
-                        if row:
-                            estorno_sub_id = row[0]
-                        else:
-                            cursor.execute(
-                                "INSERT INTO subcategorias (categoria_id, nome) VALUES (?, ?)",
-                                (estorno_cat_id, "Cartão de Crédito")
-                            )
-                            estorno_sub_id = cursor.lastrowid
-
-                        conn.commit()
-
-                        # 🔹 histórico de classificações já feitas
-                        hist = _build_hist_similaridade(conn, conta_sel)
-
-                        # Loop de lançamentos
+        
+                        # Loop de lançamentos (ignora duplicados)
                         for _, r in df_preview_editado.iterrows():
+                            if r["Já existe?"] == "✅ Sim":
+                                continue  # ignora duplicado
+        
                             desc = str(r["Descrição"])
                             val = r["Valor"]
                             if val is None:
                                 continue
-                        
+        
                             # Data
                             if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
                                 dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                                 dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
-                        
                                 if val > 0:
-                                    # Compra → grava como negativo
                                     val = -abs(val)
-                                    sub_id, _, _ = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
                                 else:
-                                    # Estorno → grava como positivo
                                     val = abs(val)
-                                    sub_id = estorno_sub_id
                             else:
                                 dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
                                 if not isinstance(dt_obj, date):
                                     continue
-                                sub_id, _, _ = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
-                        
-                            # --- Parcelamento (usa detectado ou editado) ---
+        
+                            # Parcelas
                             parcela_atual = int(r.get("Parcela atual", 1) or 1)
                             parcelas_totais = int(r.get("Parcelas totais", 1) or 1)
-                        
-                            # Insere
+        
                             cursor.execute("""
                                 INSERT INTO transactions 
-                                (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
-                                VALUES (?, ?, ?, ?, ?, 'final', ?, ?)
+                                (date, description, value, account, status, parcela_atual, parcelas_totais)
+                                VALUES (?, ?, ?, ?, 'final', ?, ?)
                             """, (
                                 dt_obj.strftime("%Y-%m-%d"),
                                 desc,
                                 val,
                                 conta_sel,
-                                sub_id,
                                 parcela_atual,
                                 parcelas_totais
                             ))
                             inserted += 1
-                        
+        
                         conn.commit()
-                        st.success(f"{inserted} lançamentos importados com sucesso!")
+                        st.success(f"{inserted} lançamentos importados com sucesso! (Duplicados foram ignorados)")
                         st.rerun()
-
             except Exception as e:
                 st.error(f"Erro ao processar arquivo: {e}")
 # =====================
