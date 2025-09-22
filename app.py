@@ -753,18 +753,43 @@ elif menu == "Importação":
 
                     # ---------- PRÉ-VISUALIZAÇÃO ----------
                     st.subheader("Pré-visualização")
-
+                    
                     # 🔹 histórico de classificações já feitas
                     hist = _build_hist_similaridade(conn, conta_sel)
-
+                    
                     df_preview = df.copy()
                     df_preview["Conta destino"] = conta_sel
+                    
+                    # Se for cartão → ajusta data
                     if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
                         from calendar import monthrange
                         dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                         dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
                         df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
-
+                    
+                    # Detecta parcelas automáticas no texto
+                    def detectar_parcela(desc: str):
+                        import re
+                        padroes = [
+                            r"(\d+)\s*/\s*(\d+)",       # ex: "3/10"
+                            r"parcela\s*(\d+)\s*de\s*(\d+)", # ex: "Parcela 5 de 12"
+                        ]
+                        for p in padroes:
+                            m = re.search(p, desc, re.IGNORECASE)
+                            if m:
+                                return int(m.group(1)), int(m.group(2))
+                        return None, None
+                    
+                    parcelas_atuais, parcelas_totais = [], []
+                    for _, r in df_preview.iterrows():
+                        p_atual, p_total = detectar_parcela(str(r["Descrição"]))
+                        parcelas_atuais.append(p_atual if p_atual else 1)
+                        parcelas_totais.append(p_total if p_total else 1)
+                    
+                    df_preview["Parcela atual"] = parcelas_atuais
+                    df_preview["Parcelas totais"] = parcelas_totais
+                    df_preview["Parcelado?"] = [p > 1 for p in parcelas_totais]
+                    
                     # 🔹 tenta sugerir categoria/subcategoria
                     sugestoes = []
                     for _, r in df_preview.iterrows():
@@ -773,22 +798,26 @@ elif menu == "Importação":
                         if val is None:
                             sugestoes.append("Nenhuma")
                             continue
-
-                        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-                            if val > 0:
-                                # Compra normal
-                                sub_id, label, score = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
-                                sugestoes.append(label if sub_id else "Nenhuma")
-                            else:
-                                # Estorno
-                                sugestoes.append("Estorno → Cartão de Crédito")
-                        else:
-                            sub_id, label, score = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
-                            sugestoes.append(label if sub_id else "Nenhuma")
-
+                        sub_id, label, score = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
+                        sugestoes.append(label if sub_id else "Nenhuma")
+                    
                     df_preview["Sugestão Categoria/Sub"] = sugestoes
-
-                    st.dataframe(df_preview, use_container_width=True)
+                    
+                    # Exibe preview editável com AgGrid
+                    gb = GridOptionsBuilder.from_dataframe(df_preview)
+                    gb.configure_default_column(editable=True)
+                    gb.configure_column("Parcelado?", editable=True, cellEditor="agSelectCellEditor",
+                                        cellEditorParams={"values": ["True", "False"]})
+                    grid = AgGrid(
+                        df_preview,
+                        gridOptions=gb.build(),
+                        update_mode=GridUpdateMode.VALUE_CHANGED,
+                        data_return_mode="AS_INPUT",
+                        fit_columns_on_grid_load=True,
+                        theme="balham",
+                        height=400
+                    )
+                    df_preview_editado = pd.DataFrame(grid["data"])
 
                     # ---------- IMPORTAR ----------
                     if st.button("Importar lançamentos"):
