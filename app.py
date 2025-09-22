@@ -813,24 +813,35 @@ elif menu == "Importação":
                     # 🔹 checa duplicidade
                     duplicados = []
                     for _, r in df_preview.iterrows():
-                        # Decide qual data usar na comparação
+                        desc = str(r["Descrição"]).strip()
+                        val = r["Valor"]
+                    
                         if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
+                            # Data efetiva = data de vencimento da fatura
                             data_cmp = datetime.strptime(r["Data efetiva"], "%d/%m/%Y").date()
+                    
+                            # Normaliza valor como no INSERT
+                            if val > 0:
+                                val_cmp = -abs(val)  # compra → negativo
+                            else:
+                                val_cmp = abs(val)   # estorno → positivo
                         else:
                             data_cmp = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
+                            val_cmp = float(val or 0)
                     
                         cursor.execute("""
                             SELECT 1 FROM transactions
                              WHERE date=? AND description=? AND value=? AND account=?
                         """, (
                             data_cmp.strftime("%Y-%m-%d") if isinstance(data_cmp, date) else None,
-                            str(r["Descrição"]),
-                            float(r["Valor"] or 0),
+                            desc,
+                            val_cmp,
                             conta_sel
                         ))
                         duplicados.append(cursor.fetchone() is not None)
                     
                     df_preview["Já existe?"] = duplicados
+                  
                     # Exibe preview editável
                     gb = GridOptionsBuilder.from_dataframe(df_preview)
                     gb.configure_default_column(editable=True)
