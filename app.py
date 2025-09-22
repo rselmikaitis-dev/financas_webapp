@@ -863,7 +863,7 @@ elif menu == "Importação":
                     if st.button("Importar lançamentos"):
                         from calendar import monthrange
                         inserted = 0
-                    
+
                         # Garante categoria "Estorno" e subcategoria "Cartão de Crédito"
                         cursor.execute("SELECT id FROM categorias WHERE nome=?", ("Estorno",))
                         row = cursor.fetchone()
@@ -872,7 +872,7 @@ elif menu == "Importação":
                         else:
                             cursor.execute("INSERT INTO categorias (nome, tipo) VALUES (?, ?)", ("Estorno", "Neutra"))
                             estorno_cat_id = cursor.lastrowid
-                    
+
                         cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", ("Cartão de Crédito", estorno_cat_id))
                         row = cursor.fetchone()
                         if row:
@@ -883,23 +883,24 @@ elif menu == "Importação":
                                 (estorno_cat_id, "Cartão de Crédito")
                             )
                             estorno_sub_id = cursor.lastrowid
-                    
+
                         conn.commit()
-                    
+
                         hist = _build_hist_similaridade(conn, conta_sel)
-                    
+
                         # Loop de lançamentos
                         for _, r in df_preview_editado.iterrows():
+                            if r.get("Já existe?"):
+                                continue  # ignora duplicados
+
                             desc = str(r["Descrição"])
                             val = r["Valor"]
                             if val is None:
                                 continue
-                    
-                            parcela_atual = int(r.get("Parcela atual", 1) or 1)
-                            parcelas_totais = int(r.get("Parcelas totais", 1) or 1)
-                    
-                            # Data inicial
+
+                            # Data
                             if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
+                                from calendar import monthrange
                                 dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                                 dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
                                 if val > 0:
@@ -913,52 +914,31 @@ elif menu == "Importação":
                                 if not isinstance(dt_obj, date):
                                     continue
                                 sub_id = r.get("sub_id_sugerido", None)
-                    
-                            # Se for parcelado → gera todas as parcelas
-                            for p in range(parcela_atual, parcelas_totais + 1):
-                                # Calcula data da parcela p
-                                mes_dest = (dt_obj.month - 1 + (p - parcela_atual)) % 12 + 1
-                                ano_dest = dt_obj.year + ((dt_obj.month - 1 + (p - parcela_atual)) // 12)
-                                dia_dest = min(dt_obj.day, monthrange(ano_dest, mes_dest)[1])
-                                dt_parcela = date(ano_dest, mes_dest, dia_dest)
-                    
-                                # Checa duplicidade
-                                cursor.execute("""
-                                    SELECT 1 FROM transactions
-                                    WHERE date=? AND description=? AND value=? AND account=?
-                                          AND parcela_atual=? AND parcelas_totais=?
-                                """, (
-                                    dt_parcela.strftime("%Y-%m-%d"),
-                                    desc,
-                                    float(val),
-                                    conta_sel,
-                                    p,
-                                    parcelas_totais
-                                ))
-                                if cursor.fetchone():
-                                    continue  # já existe
-                    
-                                # Insere
-                                cursor.execute("""
-                                    INSERT INTO transactions 
-                                    (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
-                                    VALUES (?, ?, ?, ?, ?, 'final', ?, ?)
-                                """, (
-                                    dt_parcela.strftime("%Y-%m-%d"),
-                                    desc,
-                                    val,
-                                    conta_sel,
-                                    sub_id,
-                                    p,
-                                    parcelas_totais
-                                ))
-                                inserted += 1
-                    
+
+                            parcela_atual = int(r.get("Parcela atual", 1) or 1)
+                            parcelas_totais = int(r.get("Parcelas totais", 1) or 1)
+
+                            cursor.execute("""
+                                INSERT INTO transactions 
+                                (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
+                                VALUES (?, ?, ?, ?, ?, 'final', ?, ?)
+                            """, (
+                                dt_obj.strftime("%Y-%m-%d"),
+                                desc,
+                                val,
+                                conta_sel,
+                                sub_id,
+                                parcela_atual,
+                                parcelas_totais
+                            ))
+                            inserted += 1
+
                         conn.commit()
                         st.success(f"{inserted} lançamentos importados com sucesso!")
                         st.rerun()
-          except Exception as e:
-            st.error(f"Erro ao processar arquivo: {e}")
+
+            except Exception as e:
+                st.error(f"Erro ao processar arquivo: {e}")
 
 # =====================
 # PLANEJAMENTO
