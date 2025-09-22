@@ -863,43 +863,71 @@ elif menu == "Importação":
                         # 🔹 histórico de classificações já feitas
                         hist = _build_hist_similaridade(conn, conta_sel)
 
-                        # Loop de lançamentos
-                        for _, r in df.iterrows():
-                            desc = str(r["Descrição"])
-                            val = r["Valor"]
-                            if val is None:
-                                continue
-
-                            if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-                                dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
-                                dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
-
-                                if val > 0:
-                                    # Compra → grava como negativo
-                                    val = -abs(val)
-                                    sub_id, _, _ = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
-                                else:
-                                    # Estorno → grava como positivo
-                                    val = abs(val)
-                                    sub_id = estorno_sub_id
-                            else:
-                                dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
-                                if not isinstance(dt_obj, date):
-                                    continue
+                    # Loop de lançamentos
+                    for _, r in df.iterrows():
+                        desc = str(r["Descrição"])
+                        val = r["Valor"]
+                        if val is None:
+                            continue
+                    
+                        # Data
+                        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
+                            dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
+                            dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
+                    
+                            if val > 0:
+                                # Compra → grava como negativo
+                                val = -abs(val)
                                 sub_id, _, _ = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
-
-                            # Insere
-                            cursor.execute("""
-                                INSERT INTO transactions (date, description, value, account, subcategoria_id, status)
-                                VALUES (?, ?, ?, ?, ?, 'final')
-                            """, (dt_obj.strftime("%Y-%m-%d"), desc, val, conta_sel, sub_id))
-                            inserted += 1
-
-                        conn.commit()
-                        st.success(f"{inserted} lançamentos importados com sucesso!")
-                        st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao processar arquivo: {e}")
+                            else:
+                                # Estorno → grava como positivo
+                                val = abs(val)
+                                sub_id = estorno_sub_id
+                        else:
+                            dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
+                            if not isinstance(dt_obj, date):
+                                continue
+                            sub_id, _, _ = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
+                    
+                        # --- Detecta ou usa campos de parcelamento ---
+                        parcela_atual = 1
+                        parcelas_totais = 1
+                    
+                        # tenta achar padrão tipo "05/12" no final da descrição
+                        import re
+                        match = re.search(r"(\d{1,2})/(\d{1,2})$", desc.strip())
+                        if match:
+                            try:
+                                parcela_atual = int(match.group(1))
+                                parcelas_totais = int(match.group(2))
+                            except:
+                                pass
+                    
+                        # se usuário indicou manualmente (via df_preview_editado), usa o valor dele
+                        if "Parcela atual" in r and pd.notna(r["Parcela atual"]):
+                            parcela_atual = int(r["Parcela atual"])
+                        if "Parcelas totais" in r and pd.notna(r["Parcelas totais"]):
+                            parcelas_totais = int(r["Parcelas totais"])
+                    
+                        # Insere
+                        cursor.execute("""
+                            INSERT INTO transactions 
+                            (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
+                            VALUES (?, ?, ?, ?, ?, 'final', ?, ?)
+                        """, (
+                            dt_obj.strftime("%Y-%m-%d"),
+                            desc,
+                            val,
+                            conta_sel,
+                            sub_id,
+                            parcela_atual,
+                            parcelas_totais
+                        ))
+                        inserted += 1
+                    
+                    conn.commit()
+                    st.success(f"{inserted} lançamentos importados com sucesso!")
+                    st.rerun()
 # =====================
 # PLANEJAMENTO
 # =====================
