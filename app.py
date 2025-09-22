@@ -749,9 +749,10 @@ elif menu == "Importação":
                     # Remove linhas de saldo
                     df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
 
-                    # Conversões
+                    # Conversões seguras
                     df["Data"] = df["Data"].apply(parse_date)
                     df["Valor"] = df["Valor"].apply(parse_money)
+                    df = df.dropna(subset=["Data", "Valor"])  # 🔹 remove linhas sem data/valor
 
                     # ---------- PRÉ-VISUALIZAÇÃO ----------
                     st.subheader("Pré-visualização")
@@ -769,14 +770,13 @@ elif menu == "Importação":
                         dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
                         df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
                     else:
-                        df_preview["Data efetiva"] = df_preview["Data"].dt.strftime("%d/%m/%Y")
+                        df_preview["Data efetiva"] = pd.to_datetime(df_preview["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
 
                     # Detecta parcelas automáticas no texto
                     def detectar_parcela(desc: str):
-                        import re
                         padroes = [
-                            r"(\d+)\s*/\s*(\d+)",       # ex: "3/10"
-                            r"parcela\s*(\d+)\s*de\s*(\d+)", # ex: "Parcela 5 de 12"
+                            r"(\d+)\s*/\s*(\d+)",            # ex: "3/10"
+                            r"parcela\s*(\d+)\s*de\s*(\d+)"  # ex: "Parcela 5 de 12"
                         ]
                         for p in padroes:
                             m = re.search(p, desc, re.IGNORECASE)
@@ -813,14 +813,22 @@ elif menu == "Importação":
                     # 🔹 checa duplicidade
                     duplicados = []
                     for _, r in df_preview.iterrows():
-                        cursor.execute("""
-                            SELECT 1 FROM transactions
-                             WHERE date=? AND description=? AND value=? AND account=?
-                        """, (str(r["Data"]), str(r["Descrição"]), float(r["Valor"] or 0), conta_sel))
-                        duplicados.append(cursor.fetchone() is not None)
+                        try:
+                            cursor.execute("""
+                                SELECT 1 FROM transactions
+                                 WHERE date=? AND description=? AND value=? AND account=?
+                            """, (
+                                r["Data"].strftime("%Y-%m-%d") if not pd.isna(r["Data"]) else None,
+                                str(r["Descrição"]),
+                                float(r["Valor"]) if r["Valor"] is not None else 0.0,
+                                conta_sel
+                            ))
+                            duplicados.append(cursor.fetchone() is not None)
+                        except Exception:
+                            duplicados.append(False)
                     df_preview["Já existe?"] = duplicados
 
-                    # Exibe preview editável com AgGrid
+                    # Exibe preview editável
                     gb = GridOptionsBuilder.from_dataframe(df_preview)
                     gb.configure_default_column(editable=True)
                     gb.configure_column("Parcelado?", editable=True, cellEditor="agSelectCellEditor",
@@ -915,7 +923,6 @@ elif menu == "Importação":
 
             except Exception as e:
                 st.error(f"Erro ao processar arquivo: {e}")
-
 # =====================
 # PLANEJAMENTO
 # =====================
