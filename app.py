@@ -103,6 +103,20 @@ def garantir_schema(conn):
             FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id) ON DELETE CASCADE
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY,
+            date TEXT,
+            description TEXT,
+            value REAL,
+            account TEXT,
+            subcategoria_id INTEGER,
+            status TEXT DEFAULT 'final',
+            parcela_atual INTEGER DEFAULT 1,
+            parcelas_totais INTEGER DEFAULT 1,
+            FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
+        )
+    """)
     conn.commit()
 
 # 🔹 Cria conexão única
