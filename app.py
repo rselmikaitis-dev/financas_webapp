@@ -813,21 +813,24 @@ elif menu == "Importação":
                     # 🔹 checa duplicidade
                     duplicados = []
                     for _, r in df_preview.iterrows():
-                        try:
-                            cursor.execute("""
-                                SELECT 1 FROM transactions
-                                 WHERE date=? AND description=? AND value=? AND account=?
-                            """, (
-                                r["Data"].strftime("%Y-%m-%d") if not pd.isna(r["Data"]) else None,
-                                str(r["Descrição"]),
-                                float(r["Valor"]) if r["Valor"] is not None else 0.0,
-                                conta_sel
-                            ))
-                            duplicados.append(cursor.fetchone() is not None)
-                        except Exception:
-                            duplicados.append(False)
+                        # Decide qual data usar na comparação
+                        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
+                            data_cmp = datetime.strptime(r["Data efetiva"], "%d/%m/%Y").date()
+                        else:
+                            data_cmp = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
+                    
+                        cursor.execute("""
+                            SELECT 1 FROM transactions
+                             WHERE date=? AND description=? AND value=? AND account=?
+                        """, (
+                            data_cmp.strftime("%Y-%m-%d") if isinstance(data_cmp, date) else None,
+                            str(r["Descrição"]),
+                            float(r["Valor"] or 0),
+                            conta_sel
+                        ))
+                        duplicados.append(cursor.fetchone() is not None)
+                    
                     df_preview["Já existe?"] = duplicados
-
                     # Exibe preview editável
                     gb = GridOptionsBuilder.from_dataframe(df_preview)
                     gb.configure_default_column(editable=True)
