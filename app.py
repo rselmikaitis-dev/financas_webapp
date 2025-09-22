@@ -277,7 +277,7 @@ def sugerir_subcategoria(descricao: str, hist: dict, limiar: int = 80):
 with st.sidebar:
     menu = option_menu(
         "Menu",
-        ["Dashboard Principal", "Lançamentos", "Importação", "Planejamento", "Comparativo", "Configurações"],
+        ["Dashboard Principal", "Lançamentos", "", "Planejamento", "Comparativo", "Configurações"],
         menu_icon=None,
         icons=["", "", "", "", "", ""],
         default_index=0
@@ -683,6 +683,7 @@ elif menu == "Lançamentos":
                 del st.session_state["df_lanc"]
             st.session_state["grid_refresh"] += 1
             st.rerun()
+            
 elif menu == "Importação":
     st.header("Importação de Lançamentos")
 
@@ -767,7 +768,9 @@ elif menu == "Importação":
                         dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                         dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
                         df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
-                    
+                    else:
+                        df_preview["Data efetiva"] = df_preview["Data"].dt.strftime("%d/%m/%Y")
+
                     # Detecta parcelas automáticas no texto
                     def detectar_parcela(desc: str):
                         import re
@@ -790,34 +793,43 @@ elif menu == "Importação":
                     df_preview["Parcela atual"] = parcelas_atuais
                     df_preview["Parcelas totais"] = parcelas_totais
                     df_preview["Parcelado?"] = [p > 1 for p in parcelas_totais]
-
+                    
                     # 🔹 tenta sugerir categoria/subcategoria
-                    sugestoes, sugestao_ids = [], []
+                    sugestoes, sub_ids = [], []
                     for _, r in df_preview.iterrows():
                         desc = str(r["Descrição"])
                         val = r["Valor"]
                         if val is None:
                             sugestoes.append("Nenhuma")
-                            sugestao_ids.append(None)
+                            sub_ids.append(None)
                             continue
                         sub_id, label, score = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
                         sugestoes.append(label if sub_id else "Nenhuma")
-                        sugestao_ids.append(sub_id)
+                        sub_ids.append(sub_id)
                     
                     df_preview["Sugestão Categoria/Sub"] = sugestoes
-                    df_preview["_sub_id"] = sugestao_ids
+                    df_preview["sub_id_sugerido"] = sub_ids
 
-                    # 🔹 verifica duplicados
+                    # 🔹 verifica duplicados já no banco
                     duplicados = []
                     for _, r in df_preview.iterrows():
+                        # Define data para checagem
+                        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
+                            from calendar import monthrange
+                            dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
+                            dt_check = date(ano_ref_cc, mes_ref_cc, dia_final).strftime("%Y-%m-%d")
+                        else:
+                            dt_check = r["Data"].strftime("%Y-%m-%d") if isinstance(r["Data"], date) else None
+
                         existe = cursor.execute("""
                             SELECT 1 FROM transactions
                              WHERE date=? AND description=? AND value=? AND account=?
-                        """, (str(r["Data"]), r["Descrição"], r["Valor"], conta_sel)).fetchone()
+                        """, (dt_check, r["Descrição"], r["Valor"], conta_sel)).fetchone()
                         duplicados.append(bool(existe))
+
                     df_preview["Duplicado?"] = duplicados
-                    
-                    # Exibe preview editável com AgGrid
+
+                    # Exibe preview editável
                     gb = GridOptionsBuilder.from_dataframe(df_preview)
                     gb.configure_default_column(editable=True)
                     gb.configure_column("Parcelado?", editable=True, cellEditor="agSelectCellEditor",
@@ -838,20 +850,16 @@ elif menu == "Importação":
                         from calendar import monthrange
                         inserted = 0
 
-                        # 🔹 histórico de classificações já feitas
-                        hist = _build_hist_similaridade(conn, conta_sel)
-
                         for _, r in df_preview_editado.iterrows():
+                            if r["Duplicado?"]:
+                                continue  # ignora duplicados
+
                             desc = str(r["Descrição"])
                             val = r["Valor"]
                             if val is None:
                                 continue
 
-                            # pular se duplicado
-                            if r.get("Duplicado?") in [True, "True"]:
-                                continue
-
-                            # Data
+                            # Data final
                             if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
                                 dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                                 dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
@@ -864,16 +872,13 @@ elif menu == "Importação":
                                 if not isinstance(dt_obj, date):
                                     continue
 
-                            # Categoria/Subcategoria sugerida
-                            sub_id = r.get("_sub_id")
-                            if pd.isna(sub_id) or sub_id in ("", None):
-                                sub_id = None
+                            # Usa subcategoria sugerida
+                            sub_id = r.get("sub_id_sugerido", None)
 
-                            # Parcelamento
-                            parcela_atual = int(r.get("Parcela atual", 1) or 1)
-                            parcelas_totais = int(r.get("Parcelas totais", 1) or 1)
+                            # Parcelas
+                            parcela_atual = int(r.get("Parcela atual", 1))
+                            parcelas_totais = int(r.get("Parcelas totais", 1))
 
-                            # Insere
                             cursor.execute("""
                                 INSERT INTO transactions 
                                 (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
@@ -888,13 +893,10 @@ elif menu == "Importação":
                                 parcelas_totais
                             ))
                             inserted += 1
-                    
+
                         conn.commit()
                         st.success(f"{inserted} lançamentos importados com sucesso!")
                         st.rerun()
-
-            except Exception as e:
-                st.error(f"Erro ao processar arquivo: {e}")            
 
 # =====================
 # PLANEJAMENTO
