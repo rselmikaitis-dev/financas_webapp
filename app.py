@@ -881,8 +881,10 @@ elif menu == "Importação":
                     # ---------- IMPORTAR ----------
                     if st.button("Importar lançamentos"):
                         from calendar import monthrange
+                        from dateutil.relativedelta import relativedelta
+                    
                         inserted = 0
-
+                    
                         # Garante categoria "Estorno" e subcategoria "Cartão de Crédito"
                         cursor.execute("SELECT id FROM categorias WHERE nome=?", ("Estorno",))
                         row = cursor.fetchone()
@@ -891,7 +893,7 @@ elif menu == "Importação":
                         else:
                             cursor.execute("INSERT INTO categorias (nome, tipo) VALUES (?, ?)", ("Estorno", "Neutra"))
                             estorno_cat_id = cursor.lastrowid
-
+                    
                         cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", ("Cartão de Crédito", estorno_cat_id))
                         row = cursor.fetchone()
                         if row:
@@ -902,60 +904,97 @@ elif menu == "Importação":
                                 (estorno_cat_id, "Cartão de Crédito")
                             )
                             estorno_sub_id = cursor.lastrowid
-
+                    
                         conn.commit()
-
+                    
                         hist = _build_hist_similaridade(conn, conta_sel)
-
+                    
                         # Loop de lançamentos
                         for _, r in df_preview_editado.iterrows():
-                            if r.get("Já existe?"):
-                                continue  # ignora duplicados
-
-                            desc = str(r["Descrição"])
+                            # Vamos sempre tentar gerar as futuras, mesmo que a base já exista
+                            base_existe = bool(r.get("Já existe?"))
+                    
+                            desc_original = str(r["Descrição"]).strip()
                             val = r["Valor"]
                             if val is None:
                                 continue
-
-                            # Data
+                    
+                            # Data base (dt_base) e categoria/sub
                             if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-                                from calendar import monthrange
                                 dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
-                                dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
+                                dt_base = date(ano_ref_cc, mes_ref_cc, dia_final)
                                 if val > 0:
-                                    val = -abs(val)
-                                    sub_id, _, _ = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
+                                    val = -abs(val)  # compra no cartão → negativo
+                                    sub_id, _, _ = sugerir_subcategoria(desc_original, hist) if hist else (None, None, 0)
                                 else:
-                                    val = abs(val)
+                                    val = abs(val)   # estorno → positivo
                                     sub_id = estorno_sub_id
                             else:
-                                dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
-                                if not isinstance(dt_obj, date):
+                                dt_base = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
+                                if not isinstance(dt_base, date):
                                     continue
                                 sub_id = r.get("sub_id_sugerido", None)
-
-                            parcela_atual = int(r.get("Parcela atual", 1) or 1)
-                            parcelas_totais = int(r.get("Parcelas totais", 1) or 1)
-
-                            cursor.execute("""
-                                INSERT INTO transactions 
-                                (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
-                                VALUES (?, ?, ?, ?, ?, 'final', ?, ?)
-                            """, (
-                                dt_obj.strftime("%Y-%m-%d"),
-                                desc,
-                                val,
-                                conta_sel,
-                                sub_id,
-                                parcela_atual,
-                                parcelas_totais
-                            ))
-                            inserted += 1
-
+                    
+                            p_atual = int(r.get("Parcela atual", 1) or 1)
+                            p_total = int(r.get("Parcelas totais", 1) or 1)
+                    
+                            # 1) Insere a parcela base somente se ainda não existir
+                            if not base_existe:
+                                cursor.execute("""
+                                    INSERT INTO transactions 
+                                        (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
+                                    VALUES (?, ?, ?, ?, ?, 'final', ?, ?)
+                                """, (
+                                    dt_base.strftime("%Y-%m-%d"),
+                                    desc_original,  # mantém a descrição original da parcela do arquivo
+                                    val,
+                                    conta_sel,
+                                    sub_id,
+                                    p_atual,
+                                    p_total
+                                ))
+                                inserted += 1
+                    
+                            # 2) Gera as próximas parcelas (p_atual+1 ... p_total)
+                            if p_total > p_atual:
+                                for p in range(p_atual + 1, p_total + 1):
+                                    dt_nova = dt_base + relativedelta(months=(p - p_atual))
+                                    desc_nova = _apply_parcela_in_desc(desc_original, p, p_total)
+                    
+                                    # evita duplicar a futura
+                                    cursor.execute("""
+                                        SELECT 1 FROM transactions
+                                        WHERE date=? AND description=? AND value=? AND account=? 
+                                          AND parcela_atual=? AND parcelas_totais=?
+                                    """, (
+                                        dt_nova.strftime("%Y-%m-%d"),
+                                        desc_nova,
+                                        val,
+                                        conta_sel,
+                                        p,
+                                        p_total
+                                    ))
+                                    if cursor.fetchone():
+                                        continue
+                    
+                                    cursor.execute("""
+                                        INSERT INTO transactions 
+                                            (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
+                                        VALUES (?, ?, ?, ?, ?, 'final', ?, ?)
+                                    """, (
+                                        dt_nova.strftime("%Y-%m-%d"),
+                                        desc_nova,
+                                        val,
+                                        conta_sel,
+                                        sub_id,
+                                        p,
+                                        p_total
+                                    ))
+                                    inserted += 1
+                    
                         conn.commit()
-                        st.success(f"{inserted} lançamentos importados com sucesso!")
+                        st.success(f"{inserted} lançamentos (incluindo parcelas futuras) inseridos/atualizados com sucesso!")
                         st.rerun()
-
             except Exception as e:
                 st.error(f"Erro ao processar arquivo: {e}")
 
