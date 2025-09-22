@@ -837,53 +837,82 @@ elif menu == "Importação":
                     if st.button("Importar lançamentos"):
                         from calendar import monthrange
                         inserted = 0
-        
-                        # Loop de lançamentos (ignora duplicados)
+                    
+                        # Garante categoria "Estorno" e subcategoria "Cartão de Crédito"
+                        cursor.execute("SELECT id FROM categorias WHERE nome=?", ("Estorno",))
+                        row = cursor.fetchone()
+                        if row:
+                            estorno_cat_id = row[0]
+                        else:
+                            cursor.execute("INSERT INTO categorias (nome, tipo) VALUES (?, ?)", ("Estorno", "Neutra"))
+                            estorno_cat_id = cursor.lastrowid
+                    
+                        cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", ("Cartão de Crédito", estorno_cat_id))
+                        row = cursor.fetchone()
+                        if row:
+                            estorno_sub_id = row[0]
+                        else:
+                            cursor.execute(
+                                "INSERT INTO subcategorias (categoria_id, nome) VALUES (?, ?)",
+                                (estorno_cat_id, "Cartão de Crédito")
+                            )
+                            estorno_sub_id = cursor.lastrowid
+                    
+                        conn.commit()
+                    
+                        # Loop de lançamentos usando o df_preview_editado
                         for _, r in df_preview_editado.iterrows():
-                            if r["Já existe?"] == "✅ Sim":
-                                continue  # ignora duplicado
-        
                             desc = str(r["Descrição"])
                             val = r["Valor"]
-                            if val is None:
+                            if pd.isna(val):
                                 continue
-        
+                    
                             # Data
                             if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
                                 dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
                                 dt_obj = date(ano_ref_cc, mes_ref_cc, dia_final)
+                    
                                 if val > 0:
-                                    val = -abs(val)
+                                    val = -abs(val)  # compra → negativo
                                 else:
-                                    val = abs(val)
+                                    val = abs(val)   # estorno → positivo
                             else:
                                 dt_obj = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
                                 if not isinstance(dt_obj, date):
                                     continue
-        
+                    
+                            # Subcategoria vinda da sugestão/edição
+                            sub_label = r.get("Sugestão Categoria/Sub", "Nenhuma")
+                            if sub_label and sub_label != "Nenhuma":
+                                cursor.execute("SELECT id FROM subcategorias WHERE nome=? COLLATE NOCASE", (sub_label.split(" → ")[-1],))
+                                sub_row = cursor.fetchone()
+                                sub_id = sub_row[0] if sub_row else None
+                            else:
+                                sub_id = None
+                    
                             # Parcelas
                             parcela_atual = int(r.get("Parcela atual", 1) or 1)
                             parcelas_totais = int(r.get("Parcelas totais", 1) or 1)
-        
+                    
+                            # Insere
                             cursor.execute("""
                                 INSERT INTO transactions 
-                                (date, description, value, account, status, parcela_atual, parcelas_totais)
-                                VALUES (?, ?, ?, ?, 'final', ?, ?)
+                                (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
+                                VALUES (?, ?, ?, ?, ?, 'final', ?, ?)
                             """, (
                                 dt_obj.strftime("%Y-%m-%d"),
                                 desc,
                                 val,
                                 conta_sel,
+                                sub_id,
                                 parcela_atual,
                                 parcelas_totais
                             ))
                             inserted += 1
-        
+                    
                         conn.commit()
-                        st.success(f"{inserted} lançamentos importados com sucesso! (Duplicados foram ignorados)")
+                        st.success(f"{inserted} lançamentos importados com sucesso!")
                         st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao processar arquivo: {e}")
 # =====================
 # PLANEJAMENTO
 # =====================
