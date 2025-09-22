@@ -277,7 +277,7 @@ def sugerir_subcategoria(descricao: str, hist: dict, limiar: int = 80):
 with st.sidebar:
     menu = option_menu(
         "Menu",
-        ["Dashboard Principal", "Lançamentos", "", "Planejamento", "Comparativo", "Configurações"],
+        ["Dashboard Principal", "Lançamentos", "Importação", "Planejamento", "Comparativo", "Configurações"],
         menu_icon=None,
         icons=["", "", "", "", "", ""],
         default_index=0
