@@ -7,3 +7,4 @@ streamlit-aggrid
 streamlit-plotly-events
 plotly
 rapidfuzz
+python-dateutil>=2.8.2
