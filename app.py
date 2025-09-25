@@ -1110,11 +1110,39 @@ elif menu == "Planejamento":
     df_mes = pd.concat([df_mes, pd.DataFrame([total_geral])], ignore_index=True)
 
     # grid editável só no Planejado (exceto linhas de TOTAL)
-    gb = GridOptionsBuilder.from_dataframe(df_mes.drop(columns=["Sub_id"]))
-    gb.configure_default_column(editable=False, resizable=True, type=["numericColumn"], precision=2)
-    gb.configure_column("Planejado", editable=True)
+    cellstyle_jscode = """
+    function(params) {
+        if (params.data.Categoria && params.data.Categoria.toUpperCase().includes("TOTAL GERAL")) {
+            return {
+                'font-weight': 'bold',
+                'backgroundColor': '#444444',
+                'color': 'white'
+            }
+        }
+        if (params.data.Categoria && params.data.Categoria.toUpperCase().includes("TOTAL")) {
+            return {
+                'font-weight': 'bold',
+                'backgroundColor': '#f0f0f0'
+            }
+        }
+        return null;
+    }
+    """
+
+    df_display = df_mes.drop(columns=["Sub_id"]).copy()
+    for col in ["Média 6m", "Planejado", "Realizado", "Diferença"]:
+        df_display[col] = df_display[col].apply(lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+    gb = GridOptionsBuilder.from_dataframe(df_display)
+    gb.configure_default_column(editable=False, resizable=True)
+    gb.configure_column("Planejado", editable=True, type=["numericColumn"], precision=2, cellStyle=cellstyle_jscode)
+
+    # aplica estilo também nas demais colunas numéricas
+    for col in ["Média 6m", "Realizado", "Diferença"]:
+        gb.configure_column(col, type=["numericColumn"], precision=2, cellStyle=cellstyle_jscode)
+
     grid = AgGrid(
-        df_mes.drop(columns=["Sub_id"]),
+        df_display,
         gridOptions=gb.build(),
         update_mode=GridUpdateMode.VALUE_CHANGED,
         data_return_mode="AS_INPUT",
