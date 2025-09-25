@@ -1013,12 +1013,12 @@ elif menu == "Planejamento":
     }
     mes_sel = st.selectbox("Mês", list(meses_nomes.keys()), format_func=lambda x: meses_nomes[x], index=date.today().month-1)
 
-    # 🔹 todas subcategorias
+    # 🔹 todas subcategorias (já trazendo o tipo da categoria)
     df_subs = pd.read_sql_query("""
-        SELECT s.id as sub_id, s.nome as subcategoria, c.nome as categoria
+        SELECT s.id as sub_id, s.nome as subcategoria, c.nome as categoria, c.tipo as tipo
         FROM subcategorias s
         JOIN categorias c ON s.categoria_id = c.id
-        ORDER BY c.nome, s.nome
+        ORDER BY c.tipo, c.nome, s.nome
     """, conn)
 
     # 🔹 dados já salvos
@@ -1053,6 +1053,7 @@ elif menu == "Planejamento":
         sub_id = row["sub_id"]
         cat = row["categoria"]
         sub = row["subcategoria"]
+        tipo = row["tipo"]
 
         val_plan = df_plan.loc[df_plan["subcategoria_id"]==sub_id, "valor"]
         planejado = float(val_plan.iloc[0]) if not val_plan.empty else 0.0
@@ -1065,6 +1066,7 @@ elif menu == "Planejamento":
 
         linhas.append({
             "Sub_id": sub_id,
+            "Tipo": tipo,
             "Categoria": cat,
             "Subcategoria": sub,
             "Média 6m": round(media6, 2),
@@ -1075,19 +1077,39 @@ elif menu == "Planejamento":
 
     df_mes = pd.DataFrame(linhas)
 
-    # 🔹 adiciona linha total
-    total_row = {
+    # 🔹 adiciona totais por grupo
+    grupos = []
+    for tipo in ["Receita", "Despesa Fixa", "Despesa Variável"]:
+        df_g = df_mes[df_mes["Tipo"] == tipo]
+        if not df_g.empty:
+            total_row = {
+                "Sub_id": None,
+                "Tipo": tipo,
+                "Categoria": f"TOTAL {tipo.upper()}",
+                "Subcategoria": "",
+                "Média 6m": 0.0,
+                "Planejado": round(df_g["Planejado"].sum(), 2),
+                "Realizado": round(df_g["Realizado"].sum(), 2),
+                "Diferença": round(df_g["Diferença"].sum(), 2)
+            }
+            grupos.append(df_g)
+            grupos.append(pd.DataFrame([total_row]))
+    df_mes = pd.concat(grupos, ignore_index=True)
+
+    # 🔹 adiciona total geral
+    total_geral = {
         "Sub_id": None,
-        "Categoria": "TOTAL",
+        "Tipo": "TOTAL",
+        "Categoria": "TOTAL GERAL",
         "Subcategoria": "",
         "Média 6m": 0.0,
         "Planejado": round(df_mes["Planejado"].sum(), 2),
         "Realizado": round(df_mes["Realizado"].sum(), 2),
         "Diferença": round(df_mes["Diferença"].sum(), 2)
     }
-    df_mes = pd.concat([df_mes, pd.DataFrame([total_row])], ignore_index=True)
+    df_mes = pd.concat([df_mes, pd.DataFrame([total_geral])], ignore_index=True)
 
-    # grid editável só no Planejado (exceto linha TOTAL)
+    # grid editável só no Planejado (exceto linhas de TOTAL)
     gb = GridOptionsBuilder.from_dataframe(df_mes.drop(columns=["Sub_id"]))
     gb.configure_default_column(editable=False, resizable=True, type=["numericColumn"], precision=2)
     gb.configure_column("Planejado", editable=True)
@@ -1102,11 +1124,11 @@ elif menu == "Planejamento":
     )
     df_editado = pd.DataFrame(grid["data"])
 
-    # botão salvar (ignora linha TOTAL)
+    # botão salvar (ignora linhas de TOTAL)
     if st.button("💾 Salvar planejamento"):
         cursor.execute("DELETE FROM planejado WHERE ano=? AND mes=?", (ano_sel, mes_sel))
         for _, row in df_editado.iterrows():
-            if row["Categoria"] == "TOTAL":
+            if "TOTAL" in str(row["Categoria"]).upper():
                 continue
             sub_id = int(df_mes.loc[df_mes["Subcategoria"]==row["Subcategoria"], "Sub_id"].iloc[0])
             try:
