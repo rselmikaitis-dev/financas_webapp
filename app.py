@@ -1001,9 +1001,6 @@ elif menu == "Importação":
 # =====================
 # PLANEJAMENTO (visão mensal)
 # =====================
-# =====================
-# PLANEJAMENTO
-# =====================
 elif menu == "Planejamento":
     st.header("📅 Planejamento Mensal")
 
@@ -1064,32 +1061,35 @@ elif menu == "Planejamento":
         realizado = float(val_real.iloc[0]) if not val_real.empty else 0.0
 
         val_hist = df_hist.loc[df_hist["sub_id"]==sub_id, "media_6m"]
-        media6 = round(float(val_hist.iloc[0]),2) if not val_hist.empty else 0.0
+        media6 = round(float(val_hist.iloc[0]), 2) if not val_hist.empty else 0.0
 
         linhas.append({
             "Sub_id": sub_id,
             "Categoria": cat,
             "Subcategoria": sub,
-            "Média 6m": media6,
-            "Planejado": planejado,
-            "Realizado": realizado,
-            "Diferença": realizado - planejado
+            "Média 6m": round(media6, 2),
+            "Planejado": round(planejado, 2),
+            "Realizado": round(realizado, 2),
+            "Diferença": round(realizado - planejado, 2)
         })
 
     df_mes = pd.DataFrame(linhas)
 
-    # formatação para exibição
-    def brl(v):
-        return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X",".")
+    # 🔹 adiciona linha total
+    total_row = {
+        "Sub_id": None,
+        "Categoria": "TOTAL",
+        "Subcategoria": "",
+        "Média 6m": 0.0,
+        "Planejado": round(df_mes["Planejado"].sum(), 2),
+        "Realizado": round(df_mes["Realizado"].sum(), 2),
+        "Diferença": round(df_mes["Diferença"].sum(), 2)
+    }
+    df_mes = pd.concat([df_mes, pd.DataFrame([total_row])], ignore_index=True)
 
-    df_show = df_mes.copy()
-    df_show["Média 6m"] = df_show["Média 6m"].map(brl)
-    df_show["Realizado"] = df_show["Realizado"].map(brl)
-    df_show["Diferença"] = df_show["Diferença"].map(brl)
-
-    # grid editável só no Planejado
+    # grid editável só no Planejado (exceto linha TOTAL)
     gb = GridOptionsBuilder.from_dataframe(df_mes.drop(columns=["Sub_id"]))
-    gb.configure_default_column(editable=False, resizable=True)
+    gb.configure_default_column(editable=False, resizable=True, type=["numericColumn"], precision=2)
     gb.configure_column("Planejado", editable=True)
     grid = AgGrid(
         df_mes.drop(columns=["Sub_id"]),
@@ -1102,18 +1102,12 @@ elif menu == "Planejamento":
     )
     df_editado = pd.DataFrame(grid["data"])
 
-    # total do mês
-    total_plan = df_editado["Planejado"].sum()
-    total_real = df_editado["Realizado"].sum()
-    total_diff = total_real - total_plan
-
-    st.markdown(f"**Totais {meses_nomes[mes_sel]}/{ano_sel}:** "
-                f"Planejado {brl(total_plan)} | Realizado {brl(total_real)} | Diferença {brl(total_diff)}")
-
-    # botão salvar
+    # botão salvar (ignora linha TOTAL)
     if st.button("💾 Salvar planejamento"):
         cursor.execute("DELETE FROM planejado WHERE ano=? AND mes=?", (ano_sel, mes_sel))
         for _, row in df_editado.iterrows():
+            if row["Categoria"] == "TOTAL":
+                continue
             sub_id = int(df_mes.loc[df_mes["Subcategoria"]==row["Subcategoria"], "Sub_id"].iloc[0])
             try:
                 val = float(row["Planejado"]) if row["Planejado"] not in (None,"","NaN") else 0.0
