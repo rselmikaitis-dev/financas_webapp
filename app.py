@@ -100,14 +100,21 @@ def garantir_schema(conn):
             status TEXT DEFAULT 'final',
             parcela_atual INTEGER DEFAULT 1,
             parcelas_totais INTEGER DEFAULT 1,
+            desc_norm TEXT,
             FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
         )
     """)
     conn.commit()
-    try:
-        cursor.execute("ALTER TABLE transactions ADD COLUMN desc_norm TEXT")
-    except:
-        pass
+
+def atualizar_desc_norm(conn):
+    """Preenche a coluna desc_norm para lançamentos antigos"""
+    cursor = conn.cursor()
+    rows = cursor.execute("SELECT id, description FROM transactions WHERE description IS NOT NULL").fetchall()
+    for rid, desc in rows:
+        if desc:  # só normaliza se tiver descrição
+            desc_n = _normalize_desc(desc)
+            cursor.execute("UPDATE transactions SET desc_norm=? WHERE id=?", (desc_n, rid))
+    conn.commit()
 
 # 🔹 Cria conexão única
 if "conn" not in st.session_state or st.session_state.conn is None:
@@ -118,6 +125,9 @@ else:
 
 # 🔹 Garante que tabelas e colunas existam
 garantir_schema(conn)
+
+# 🔹 Atualiza desc_norm retroativamente (executa sempre, mas só muda se estiver vazio/diferente)
+atualizar_desc_norm(conn)
 
 # 🔹 Cursor pronto
 cursor = conn.cursor()
