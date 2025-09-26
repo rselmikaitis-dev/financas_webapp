@@ -706,111 +706,14 @@ elif menu == "Lançamentos":
 elif menu == "Importação":
     st.header("Importação de Lançamentos")
 
-    # ============ Funções auxiliares ESPECÍFICAS da Importação ============
-    import unicodedata as __ud
-    import re as __re
-
-    def _normalize_for_match(s: str) -> str:
-        """
-        Normalização usada APENAS para comparar duplicidade:
-        - lower
-        - remove acentos
-        - remove pontuação
-        - colapsa espaços
-        """
-        s = str(s or "").strip().lower()
-        s = __ud.normalize("NFKD", s).encode("ascii", "ignore").decode()
-        # mantém alfanum e espaço
-        s = __re.sub(r"[^a-z0-9\s]", " ", s)
-        s = __re.sub(r"\s+", " ", s).strip()
-        return s
-
-    def detectar_parcela(desc: str):
-        """
-        Detecta compra parcelada com regras mais estritas.
-        Evita confundir datas como 25/09/2025.
-        Retorna (parcela_atual, parcelas_totais) ou (None, None).
-        """
-        d = str(desc or "").lower()
-
-        # 1) "Parcela 3 de 10"
-        m = re.search(r"\bparcela\s*(\d+)\s*de\s*(\d+)\b", d)
-        if m:
-            pa, pt = int(m.group(1)), int(m.group(2))
-            if 1 <= pa <= pt <= 36:
-                return pa, pt
-
-        # 2) "3/10" isolado (não parte de data longa)
-        m = re.search(r"\b(\d{1,2})/(\d{1,2})\b", d)
-        if m:
-            pa, pt = int(m.group(1)), int(m.group(2))
-            # exige pt >= pa e um teto razoável de 36x
-            if pt > 1 and pa >= 1 and pt >= pa and pt <= 36:
-                return pa, pt
-
-        return None, None
-
-    def _val_sign_and_date_for_preview(row, conta_sel, mes_ref_cc, ano_ref_cc, dia_venc_cc):
-        """
-        Calcula:
-          - data_cmp (date) usada para checar duplicidade
-          - val_cmp (float) com sinal já normalizado
-          - dt_base (date) para eventual INSERT
-        Regras:
-          - Cartão: usa Data Efetiva (vencimento); compras entram negativas; estorno positivo.
-          - Corrente: usa Data original e mantém sinal do arquivo.
-        """
-        from calendar import monthrange
-        raw_data = row["Data"] if isinstance(row["Data"], date) else parse_date(row["Data"])
-        raw_val = row["Valor"]
-        if raw_val is None or raw_data is pd.NaT or raw_data is None:
-            return None, None, None
-
-        v = float(raw_val)
-        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-            dia_final = min(int(dia_venc_cc or 1), monthrange(int(ano_ref_cc), int(mes_ref_cc))[1])
-            dt_eff = date(int(ano_ref_cc), int(mes_ref_cc), dia_final)
-            # No cartão, compras são negativas; estornos, positivos
-            val_cmp = -abs(v) if v > 0 else abs(v)
-            return dt_eff, round(val_cmp, 2), dt_eff
-        else:
-            # Conta corrente: usa a própria data e mantém sinal que veio do arquivo
-            return raw_data, round(v, 2), raw_data
-
-    def _row_exists_in_db(desc_norm, data_cmp, val_cmp, conta_sel):
-        """
-        Consulta rápida por possíveis candidatos via SQLite (mesma date, account e ROUND(value,2)).
-        Depois compara a descrição normalizada em Python para bater 100%.
-        """
-        if not isinstance(data_cmp, date):
-            return False
-
-        # busca candidatos do mesmo dia, conta e valor (com 2 casas)
-        cursor.execute("""
-            SELECT description
-              FROM transactions
-             WHERE date = ?
-               AND account = ?
-               AND ROUND(value, 2) = ROUND(?, 2)
-        """, (data_cmp.strftime("%Y-%m-%d"), conta_sel, float(val_cmp)))
-        rows = cursor.fetchall()
-        if not rows:
-            return False
-
-        # compara descrição normalizada
-        for (desc_db,) in rows:
-            if _normalize_for_match(desc_db) == desc_norm:
-                return True
-        return False
-
-    # ================== UI e fluxo ==================
+    # Selecionar conta destino
     contas_db = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
     if not contas_db:
         st.error("Nenhuma conta cadastrada. Vá em Configurações → Contas.")
     else:
         conta_sel = st.selectbox("Conta destino", contas_db)
 
-        # Upload
+        # Upload de arquivo
         arquivo = st.file_uploader("Selecione o arquivo (CSV, XLSX ou XLS)", type=["csv", "xlsx", "xls"])
 
         def _read_uploaded(file):
@@ -823,7 +726,7 @@ elif menu == "Importação":
                 return pd.read_excel(file, engine="xlrd", dtype=str)
             raise RuntimeError("Formato não suportado.")
 
-        # Se for cartão, pedir mês/ano
+        # Se for cartão de crédito → pedir mês/ano
         mes_ref_cc = ano_ref_cc = dia_venc_cc = None
         if conta_sel and is_cartao_credito(conta_sel):
             cursor.execute("SELECT dia_vencimento FROM contas WHERE nome=?", (conta_sel,))
@@ -868,36 +771,49 @@ elif menu == "Importação":
                     # Conversões seguras
                     df["Data"] = df["Data"].apply(parse_date)
                     df["Valor"] = df["Valor"].apply(parse_money)
-                    df = df.dropna(subset=["Data", "Valor"])
+                    df = df.dropna(subset=["Data", "Valor"])  # 🔹 remove linhas sem data/valor
 
                     # ---------- PRÉ-VISUALIZAÇÃO ----------
                     st.subheader("Pré-visualização")
-
+                    
+                    # 🔹 histórico de classificações já feitas
                     hist = _build_hist_similaridade(conn, conta_sel)
-
+                    
                     df_preview = df.copy()
                     df_preview["Conta destino"] = conta_sel
-
-                    # Data efetiva para cartão
+                    
+                    # Se for cartão → ajusta data
                     if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
                         from calendar import monthrange
-                        dia_final = min(int(dia_venc_cc or 1), monthrange(int(ano_ref_cc), int(mes_ref_cc))[1])
-                        dt_eff = date(int(ano_ref_cc), int(mes_ref_cc), dia_final)
+                        dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
+                        dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
                         df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
                     else:
                         df_preview["Data efetiva"] = pd.to_datetime(df_preview["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-
-                    # Parcelas
+                    
+                    # Detecta parcelas automáticas no texto
+                    def detectar_parcela(desc: str):
+                        padroes = [
+                            r"(\d+)\s*/\s*(\d+)",            # ex: "3/10"
+                            r"parcela\s*(\d+)\s*de\s*(\d+)"  # ex: "Parcela 5 de 12"
+                        ]
+                        for p in padroes:
+                            m = re.search(p, desc, re.IGNORECASE)
+                            if m:
+                                return int(m.group(1)), int(m.group(2))
+                        return None, None
+                    
                     parcelas_atuais, parcelas_totais = [], []
                     for _, r in df_preview.iterrows():
-                        pa, pt = detectar_parcela(str(r["Descrição"]))
-                        parcelas_atuais.append(pa if pa else 1)
-                        parcelas_totais.append(pt if pt else 1)
+                        p_atual, p_total = detectar_parcela(str(r["Descrição"]))
+                        parcelas_atuais.append(p_atual if p_atual else 1)
+                        parcelas_totais.append(p_total if p_total else 1)
+                    
                     df_preview["Parcela atual"] = parcelas_atuais
                     df_preview["Parcelas totais"] = parcelas_totais
                     df_preview["Parcelado?"] = [p > 1 for p in parcelas_totais]
-
-                    # Sugestão de categoria
+                    
+                    # 🔹 tenta sugerir categoria/subcategoria
                     sugestoes, sub_ids = [], []
                     for _, r in df_preview.iterrows():
                         desc = str(r["Descrição"])
@@ -909,25 +825,47 @@ elif menu == "Importação":
                         sub_id, label, score = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
                         sugestoes.append(label if sub_id else "Nenhuma")
                         sub_ids.append(sub_id)
+                    
                     df_preview["Sugestão Categoria/Sub"] = sugestoes
                     df_preview["sub_id_sugerido"] = sub_ids
-
-                    # ---------- Checagem de duplicidade ROBUSTA ----------
-                    ja_existe_flags = []
+                    
+                    # 🔹 checa duplicidade usando descrição normalizada
+                    duplicados = []
                     for _, r in df_preview.iterrows():
-                        desc_norm = _normalize_for_match(r["Descrição"])
-                        data_cmp, val_cmp, _ = _val_sign_and_date_for_preview(r, conta_sel, mes_ref_cc, ano_ref_cc, dia_venc_cc)
+                        desc = str(r["Descrição"]).strip()
+                        val = r["Valor"]
 
-                        if not data_cmp:
-                            ja_existe_flags.append(False)
+                        if val is None:
+                            duplicados.append(False)
                             continue
 
-                        exists = _row_exists_in_db(desc_norm, data_cmp, val_cmp, conta_sel)
-                        ja_existe_flags.append(exists)
+                        try:
+                            val = round(float(val), 2)
+                        except:
+                            val = 0.0
 
-                    df_preview["Já existe?"] = ja_existe_flags
+                        desc_norm = _normalize_desc(desc)
 
-                    # Preview grid
+                        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
+                            data_cmp = datetime.strptime(r["Data efetiva"], "%d/%m/%Y").date()
+                        else:
+                            data_cmp = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
+
+                        cursor.execute("""
+                            SELECT 1 FROM transactions
+                             WHERE date=? AND ROUND(value,2)=ROUND(?,2) AND account=? 
+                               AND desc_norm=?
+                        """, (
+                            data_cmp.strftime("%Y-%m-%d") if isinstance(data_cmp, date) else None,
+                            val,
+                            conta_sel,
+                            desc_norm
+                        ))
+                        duplicados.append(cursor.fetchone() is not None)
+
+                    df_preview["Já existe?"] = duplicados
+                    
+                    # Exibe preview editável
                     gb = GridOptionsBuilder.from_dataframe(df_preview)
                     gb.configure_default_column(editable=True)
                     gb.configure_column("Parcelado?", editable=True, cellEditor="agSelectCellEditor",
@@ -939,86 +877,56 @@ elif menu == "Importação":
                         data_return_mode="AS_INPUT",
                         fit_columns_on_grid_load=True,
                         theme="balham",
-                        height=420
+                        height=400
                     )
                     df_preview_editado = pd.DataFrame(grid["data"])
-
+            
                     # ---------- IMPORTAR ----------
                     if st.button("Importar lançamentos"):
                         from calendar import monthrange
                         from dateutil.relativedelta import relativedelta
-
-                        # Garante categoria "Estorno" e sub "Cartão de Crédito"
-                        cursor.execute("SELECT id FROM categorias WHERE nome=?", ("Estorno",))
-                        row = cursor.fetchone()
-                        if row:
-                            estorno_cat_id = row[0]
-                        else:
-                            cursor.execute("INSERT INTO categorias (nome, tipo) VALUES (?, ?)", ("Estorno", "Neutra"))
-                            estorno_cat_id = cursor.lastrowid
-
-                        cursor.execute("SELECT id FROM subcategorias WHERE nome=? AND categoria_id=?", ("Cartão de Crédito", estorno_cat_id))
-                        row = cursor.fetchone()
-                        if row:
-                            estorno_sub_id = row[0]
-                        else:
-                            cursor.execute(
-                                "INSERT INTO subcategorias (categoria_id, nome) VALUES (?, ?)",
-                                (estorno_cat_id, "Cartão de Crédito")
-                            )
-                            estorno_sub_id = cursor.lastrowid
-
-                        conn.commit()
-
-                        hist = _build_hist_similaridade(conn, conta_sel)
+                    
                         inserted = 0
-
+                        hist = _build_hist_similaridade(conn, conta_sel)
+                    
+                        # Loop de lançamentos
                         for _, r in df_preview_editado.iterrows():
-                            # Normaliza flags e campos necessários
+                            if r.get("Já existe?"):
+                                continue
+                            
                             desc_original = str(r["Descrição"]).strip()
-                            if r.get("Valor") is None:
+                            val = r["Valor"]
+                            if val is None:
                                 continue
 
-                            # Calcula data/sinal para comparação e para gravação
-                            data_cmp, val_cmp, dt_base = _val_sign_and_date_for_preview(r, conta_sel, mes_ref_cc, ano_ref_cc, dia_venc_cc)
-                            if not isinstance(dt_base, date):
-                                continue
-
-                            # Se cartão, ajusta valor para inserção (mesma regra da duplicidade)
-                            v_raw = float(r["Valor"])
                             if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-                                val_to_insert = -abs(v_raw) if v_raw > 0 else abs(v_raw)
-                            else:
-                                val_to_insert = v_raw
-
-                            # Define subcategoria
-                            if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-                                if val_to_insert < 0:
+                                dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
+                                dt_base = date(ano_ref_cc, mes_ref_cc, dia_final)
+                                if val > 0:
+                                    val = -abs(val)
                                     sub_id, _, _ = sugerir_subcategoria(desc_original, hist) if hist else (None, None, 0)
                                 else:
-                                    sub_id = estorno_sub_id
+                                    val = abs(val)
+                                    sub_id = None
                             else:
+                                dt_base = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
+                                if not isinstance(dt_base, date):
+                                    continue
                                 sub_id = r.get("sub_id_sugerido", None)
 
-                            # Parcelas
                             p_atual = int(r.get("Parcela atual", 1) or 1)
                             p_total = int(r.get("Parcelas totais", 1) or 1)
 
-                            # ======== BLOQUEIO ANTI-DUPLICADO ANTES DO INSERT ========
-                            desc_norm = _normalize_for_match(desc_original)
-                            if _row_exists_in_db(desc_norm, data_cmp, val_cmp, conta_sel):
-                                # já existe – NÃO insere e segue adiante
-                                continue
-
-                            # 1) Insere base
+                            # Inserção preservando descrição original
                             cursor.execute("""
                                 INSERT INTO transactions 
-                                    (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
-                                VALUES (?, ?, ?, ?, ?, 'final', ?, ?)
+                                    (date, description, desc_norm, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
+                                VALUES (?, ?, ?, ?, ?, ?, 'final', ?, ?)
                             """, (
                                 dt_base.strftime("%Y-%m-%d"),
                                 desc_original,
-                                float(val_to_insert),
+                                _normalize_desc(desc_original),
+                                val,
                                 conta_sel,
                                 sub_id,
                                 p_atual,
@@ -1026,37 +934,46 @@ elif menu == "Importação":
                             ))
                             inserted += 1
 
-                            # 2) Futuras parcelas (se houver)
+                            # Gera parcelas futuras se aplicável
                             if p_total > p_atual:
                                 for p in range(p_atual + 1, p_total + 1):
                                     dt_nova = dt_base + relativedelta(months=(p - p_atual))
-                                    desc_nova = _apply_parcela_in_desc(desc_original, p, p_total)
-
-                                    # Checagem de duplicidade para cada futura
-                                    if _row_exists_in_db(_normalize_for_match(desc_nova), dt_nova, val_to_insert, conta_sel):
+                                    cursor.execute("""
+                                        SELECT 1 FROM transactions
+                                        WHERE date=? AND value=? AND account=? 
+                                          AND parcela_atual=? AND parcelas_totais=? AND desc_norm=?
+                                    """, (
+                                        dt_nova.strftime("%Y-%m-%d"),
+                                        val,
+                                        conta_sel,
+                                        p,
+                                        p_total,
+                                        _normalize_desc(desc_original)
+                                    ))
+                                    if cursor.fetchone():
                                         continue
 
                                     cursor.execute("""
                                         INSERT INTO transactions 
-                                            (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
-                                        VALUES (?, ?, ?, ?, ?, 'final', ?, ?)
+                                            (date, description, desc_norm, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
+                                        VALUES (?, ?, ?, ?, ?, ?, 'final', ?, ?)
                                     """, (
                                         dt_nova.strftime("%Y-%m-%d"),
-                                        desc_nova,
-                                        float(val_to_insert),
+                                        desc_original,
+                                        _normalize_desc(desc_original),
+                                        val,
                                         conta_sel,
                                         sub_id,
                                         p,
                                         p_total
                                     ))
                                     inserted += 1
-
+                    
                         conn.commit()
-                        st.success(f"{inserted} lançamentos (incluindo parcelas futuras) inseridos/atualizados com sucesso!")
+                        st.success(f"{inserted} lançamentos (incluindo parcelas futuras) inseridos com sucesso!")
                         st.rerun()
             except Exception as e:
                 st.error(f"Erro ao processar arquivo: {e}")
-
 # =====================
 # PLANEJAMENTO (visão mensal)
 # =====================
