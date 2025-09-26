@@ -122,11 +122,22 @@ def _normalize_desc(s: str) -> str:
 def atualizar_desc_norm(conn):
     """Preenche a coluna desc_norm para lançamentos antigos"""
     cursor = conn.cursor()
-    rows = cursor.execute("SELECT id, description FROM transactions WHERE description IS NOT NULL").fetchall()
-    for rid, desc in rows:
-        if desc:  # só normaliza se tiver descrição
-            desc_n = _normalize_desc(desc)
-            cursor.execute("UPDATE transactions SET desc_norm=? WHERE id=?", (desc_n, rid))
+    rows = cursor.execute(
+        "SELECT id, description, desc_norm FROM transactions WHERE description IS NOT NULL"
+    ).fetchall()
+    for rid, desc, desc_norm in rows:
+        try:
+            rid_int = int(rid)
+            desc_str = str(desc)
+            if not desc_str.strip():
+                continue
+            desc_n = _normalize_desc(desc_str)
+            if desc_norm == desc_n:
+                continue
+            cursor.execute("UPDATE transactions SET desc_norm=? WHERE id=?", (desc_n, rid_int))
+        except (ValueError, TypeError, sqlite3.InterfaceError) as exc:
+            print(f"[atualizar_desc_norm] Falha ao normalizar registro {rid}: {exc}")
+            continue
     conn.commit()
 
 # 🔹 Cria conexão única
