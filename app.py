@@ -104,6 +104,10 @@ def garantir_schema(conn):
         )
     """)
     conn.commit()
+    try:
+    cursor.execute("ALTER TABLE transactions ADD COLUMN desc_norm TEXT")
+    except:
+        pass
 
 # 🔹 Cria conexão única
 if "conn" not in st.session_state or st.session_state.conn is None:
