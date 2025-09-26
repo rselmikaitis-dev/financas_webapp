@@ -105,7 +105,7 @@ def garantir_schema(conn):
     """)
     conn.commit()
     try:
-    cursor.execute("ALTER TABLE transactions ADD COLUMN desc_norm TEXT")
+        cursor.execute("ALTER TABLE transactions ADD COLUMN desc_norm TEXT")
     except:
         pass
 
