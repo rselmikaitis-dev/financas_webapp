@@ -741,12 +741,21 @@ elif menu == "Importação":
             raise RuntimeError("Formato não suportado.")
 
         # Se for cartão de crédito → pedir mês/ano
-        mes_ref_cc = ano_ref_cc = dia_venc_cc = None
-        if conta_sel and is_cartao_credito(conta_sel):
+        mes_ref_cc = ano_ref_cc = None
+        dia_venc_cc = None
+        if conta_sel:
             cursor.execute("SELECT dia_vencimento FROM contas WHERE nome=?", (conta_sel,))
             row = cursor.fetchone()
-            dia_venc_cc = row[0] if row and row[0] else 1
-            st.info(f"Conta de cartão detectada. Dia de vencimento cadastrado: **{dia_venc_cc}**.")
+            dia_venc_cc = row[0] if row and row[0] else None
+
+        eh_cartao = is_cartao_credito(conta_sel) if conta_sel else False
+        if dia_venc_cc:
+            eh_cartao = True
+            st.info(
+                f"Conta de cartão detectada. Dia de vencimento cadastrado: **{dia_venc_cc}**."
+            )
+
+        if conta_sel and eh_cartao:
             mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
 
         if arquivo is not None:
@@ -797,14 +806,14 @@ elif menu == "Importação":
                     df_preview["Conta destino"] = conta_sel
                     
                     # Se for cartão → ajusta data
-                    if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
+                    if eh_cartao and mes_ref_cc and ano_ref_cc:
                         from calendar import monthrange
-                        dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
+                        dia_final = min(dia_venc_cc or 1, monthrange(ano_ref_cc, mes_ref_cc)[1])
                         dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
                         df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
                     else:
                         df_preview["Data efetiva"] = pd.to_datetime(df_preview["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-                    
+
                     # Detecta parcelas automáticas no texto
                     def detectar_parcela(desc: str):
                         padroes = [
@@ -817,13 +826,13 @@ elif menu == "Importação":
                                 return int(m.group(1)), int(m.group(2))
                         return None, None
                     
-                    if is_cartao_credito(conta_sel):
-                        parcelas_atuais, parcelas_totais = [], []
-                        for _, r in df_preview.iterrows():
-                            p_atual, p_total = detectar_parcela(str(r["Descrição"]))
-                            parcelas_atuais.append(p_atual if p_atual else 1)
-                            parcelas_totais.append(p_total if p_total else 1)
+                    parcelas_atuais, parcelas_totais = [], []
+                    for _, r in df_preview.iterrows():
+                        p_atual, p_total = detectar_parcela(str(r["Descrição"]))
+                        parcelas_atuais.append(p_atual if p_atual else 1)
+                        parcelas_totais.append(p_total if p_total else 1)
 
+                    if eh_cartao:
                         df_preview["Parcela atual"] = parcelas_atuais
                         df_preview["Parcelas totais"] = parcelas_totais
                         df_preview["Parcelado?"] = [p > 1 for p in parcelas_totais]
@@ -865,7 +874,7 @@ elif menu == "Importação":
 
                         desc_norm = _normalize_desc(desc)
 
-                        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
+                        if eh_cartao and mes_ref_cc and ano_ref_cc:
                             data_cmp = datetime.strptime(r["Data efetiva"], "%d/%m/%Y").date()
                         else:
                             data_cmp = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
@@ -918,8 +927,8 @@ elif menu == "Importação":
                             if val is None:
                                 continue
 
-                            if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-                                dia_final = min(dia_venc_cc, monthrange(ano_ref_cc, mes_ref_cc)[1])
+                            if eh_cartao and mes_ref_cc and ano_ref_cc:
+                                dia_final = min(dia_venc_cc or 1, monthrange(ano_ref_cc, mes_ref_cc)[1])
                                 dt_base = date(ano_ref_cc, mes_ref_cc, dia_final)
                                 if val > 0:
                                     val = -abs(val)
