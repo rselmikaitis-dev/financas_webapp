@@ -775,13 +775,13 @@ elif menu == "Importação":
 
                     # ---------- PRÉ-VISUALIZAÇÃO ----------
                     st.subheader("Pré-visualização")
-
+                    
                     # 🔹 histórico de classificações já feitas
                     hist = _build_hist_similaridade(conn, conta_sel)
-
+                    
                     df_preview = df.copy()
                     df_preview["Conta destino"] = conta_sel
-
+                    
                     # Se for cartão → ajusta data
                     if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
                         from calendar import monthrange
@@ -790,7 +790,7 @@ elif menu == "Importação":
                         df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
                     else:
                         df_preview["Data efetiva"] = pd.to_datetime(df_preview["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-
+                    
                     # Detecta parcelas automáticas no texto
                     def detectar_parcela(desc: str):
                         padroes = [
@@ -802,17 +802,17 @@ elif menu == "Importação":
                             if m:
                                 return int(m.group(1)), int(m.group(2))
                         return None, None
-
+                    
                     parcelas_atuais, parcelas_totais = [], []
                     for _, r in df_preview.iterrows():
                         p_atual, p_total = detectar_parcela(str(r["Descrição"]))
                         parcelas_atuais.append(p_atual if p_atual else 1)
                         parcelas_totais.append(p_total if p_total else 1)
-
+                    
                     df_preview["Parcela atual"] = parcelas_atuais
                     df_preview["Parcelas totais"] = parcelas_totais
                     df_preview["Parcelado?"] = [p > 1 for p in parcelas_totais]
-
+                    
                     # 🔹 tenta sugerir categoria/subcategoria
                     sugestoes, sub_ids = [], []
                     for _, r in df_preview.iterrows():
@@ -825,35 +825,40 @@ elif menu == "Importação":
                         sub_id, label, score = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
                         sugestoes.append(label if sub_id else "Nenhuma")
                         sub_ids.append(sub_id)
-
+                    
                     df_preview["Sugestão Categoria/Sub"] = sugestoes
                     df_preview["sub_id_sugerido"] = sub_ids
-
-                    # 🔹 checa duplicidade (corrigido)
+                    
+                    # 🔹 checa duplicidade
                     duplicados = []
                     for _, r in df_preview.iterrows():
                         desc = str(r["Descrição"]).strip()
                         val = r["Valor"]
                     
-                        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-                            # Cartão de crédito → usa data efetiva (fatura) e ajusta sinal
-                            try:
-                                data_cmp = datetime.strptime(r["Data efetiva"], "%d/%m/%Y").date()
-                            except Exception:
-                                data_cmp = parse_date(r["Data"])
+                        if val is None:
+                            duplicados.append(False)
+                            continue
                     
+                        # Normaliza para 2 casas decimais
+                        try:
+                            val = round(float(val), 2)
+                        except:
+                            val = 0.0
+                    
+                        if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
+                            # Data efetiva = data de vencimento da fatura
+                            data_cmp = datetime.strptime(r["Data efetiva"], "%d/%m/%Y").date()
                             if val > 0:
-                                val_cmp = -abs(val)  # compra → negativo
+                                val_cmp = -abs(val)  # compra
                             else:
-                                val_cmp = abs(val)   # estorno → positivo
+                                val_cmp = abs(val)   # estorno
                         else:
-                            # Conta corrente → usa data original e valor sem ajuste
                             data_cmp = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
-                            val_cmp = float(val or 0)
+                            val_cmp = val
                     
                         cursor.execute("""
                             SELECT 1 FROM transactions
-                             WHERE date=? AND description=? AND value=? AND account=?
+                             WHERE date=? AND description=? AND ROUND(value,2)=ROUND(?,2) AND account=?
                         """, (
                             data_cmp.strftime("%Y-%m-%d") if isinstance(data_cmp, date) else None,
                             desc,
@@ -863,7 +868,7 @@ elif menu == "Importação":
                         duplicados.append(cursor.fetchone() is not None)
                     
                     df_preview["Já existe?"] = duplicados
-                  
+                    
                     # Exibe preview editável
                     gb = GridOptionsBuilder.from_dataframe(df_preview)
                     gb.configure_default_column(editable=True)
@@ -879,7 +884,6 @@ elif menu == "Importação":
                         height=400
                     )
                     df_preview_editado = pd.DataFrame(grid["data"])
-
             
                     # ---------- IMPORTAR ----------
                     if st.button("Importar lançamentos"):
