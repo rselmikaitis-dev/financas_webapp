@@ -1129,17 +1129,28 @@ elif menu == "Planejamento":
     }
     """
 
+    # mantém os números como float
     df_display = df_mes.drop(columns=["Sub_id"]).copy()
-    for col in ["Média 6m", "Planejado", "Realizado", "Diferença"]:
-        df_display[col] = df_display[col].apply(lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+    # valueFormatter em JS para formatar estilo brasileiro
+    value_formatter = """
+    function(params) {
+        if (params.value == null) return '';
+        return params.value.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+    """
 
     gb = GridOptionsBuilder.from_dataframe(df_display)
     gb.configure_default_column(editable=False, resizable=True)
-    gb.configure_column("Planejado", editable=True, type=["numericColumn"], precision=2, cellStyle=cellstyle_jscode)
 
-    # aplica estilo também nas demais colunas numéricas
+    # Planejado editável
+    gb.configure_column("Planejado", editable=True, type=["numericColumn"],
+                        valueFormatter=value_formatter, cellStyle=cellstyle_jscode)
+
+    # outras colunas numéricas só exibem formatadas
     for col in ["Média 6m", "Realizado", "Diferença"]:
-        gb.configure_column(col, type=["numericColumn"], precision=2, cellStyle=cellstyle_jscode)
+        gb.configure_column(col, type=["numericColumn"],
+                            valueFormatter=value_formatter, cellStyle=cellstyle_jscode)
 
     grid = AgGrid(
         df_display,
