@@ -829,22 +829,25 @@ elif menu == "Importação":
                     df_preview["Sugestão Categoria/Sub"] = sugestoes
                     df_preview["sub_id_sugerido"] = sub_ids
 
-                    # 🔹 checa duplicidade
+                    # 🔹 checa duplicidade (corrigido)
                     duplicados = []
                     for _, r in df_preview.iterrows():
                         desc = str(r["Descrição"]).strip()
                         val = r["Valor"]
                     
                         if is_cartao_credito(conta_sel) and mes_ref_cc and ano_ref_cc:
-                            # Data efetiva = data de vencimento da fatura
-                            data_cmp = datetime.strptime(r["Data efetiva"], "%d/%m/%Y").date()
+                            # Cartão de crédito → usa data efetiva (fatura) e ajusta sinal
+                            try:
+                                data_cmp = datetime.strptime(r["Data efetiva"], "%d/%m/%Y").date()
+                            except Exception:
+                                data_cmp = parse_date(r["Data"])
                     
-                            # Normaliza valor como no INSERT
                             if val > 0:
                                 val_cmp = -abs(val)  # compra → negativo
                             else:
                                 val_cmp = abs(val)   # estorno → positivo
                         else:
+                            # Conta corrente → usa data original e valor sem ajuste
                             data_cmp = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
                             val_cmp = float(val or 0)
                     
