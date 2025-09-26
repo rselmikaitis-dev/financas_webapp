@@ -1011,9 +1011,11 @@ elif menu == "Planejamento":
         1:"Janeiro", 2:"Fevereiro", 3:"Março", 4:"Abril", 5:"Maio", 6:"Junho",
         7:"Julho", 8:"Agosto", 9:"Setembro", 10:"Outubro", 11:"Novembro", 12:"Dezembro"
     }
-    mes_sel = st.selectbox("Mês", list(meses_nomes.keys()), format_func=lambda x: meses_nomes[x], index=date.today().month-1)
+    mes_sel = st.selectbox("Mês", list(meses_nomes.keys()),
+                           format_func=lambda x: meses_nomes[x],
+                           index=date.today().month-1)
 
-    # 🔹 todas subcategorias (já trazendo o tipo da categoria)
+    # 🔹 todas subcategorias (com tipo da categoria)
     df_subs = pd.read_sql_query("""
         SELECT s.id as sub_id, s.nome as subcategoria, c.nome as categoria, c.tipo as tipo
         FROM subcategorias s
@@ -1021,7 +1023,7 @@ elif menu == "Planejamento":
         ORDER BY c.tipo, c.nome, s.nome
     """, conn)
 
-    # 🔹 dados já salvos
+    # 🔹 planejado salvo
     df_plan = pd.read_sql_query("""
         SELECT ano, mes, subcategoria_id, valor
         FROM planejado
@@ -1037,7 +1039,7 @@ elif menu == "Planejamento":
         GROUP BY s.id
     """, conn, params=(str(ano_sel), f"{mes_sel:02d}"))
 
-    # 🔹 histórico últimos 6 meses
+    # 🔹 média últimos 6 meses
     seis_meses_atras = date(ano_sel, mes_sel, 1) - pd.DateOffset(months=6)
     df_hist = pd.read_sql_query("""
         SELECT s.id as sub_id, AVG(t.value) as media_6m
@@ -1045,9 +1047,10 @@ elif menu == "Planejamento":
         LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
         WHERE date(t.date) >= ? AND date(t.date) < ?
         GROUP BY s.id
-    """, conn, params=(seis_meses_atras.strftime("%Y-%m-%d"), date(ano_sel, mes_sel, 1).strftime("%Y-%m-%d")))
+    """, conn, params=(seis_meses_atras.strftime("%Y-%m-%d"),
+                       date(ano_sel, mes_sel, 1).strftime("%Y-%m-%d")))
 
-    # monta base
+    # 🔹 monta base linha a linha
     linhas = []
     for _, row in df_subs.iterrows():
         sub_id = row["sub_id"]
@@ -1062,17 +1065,17 @@ elif menu == "Planejamento":
         realizado = float(val_real.iloc[0]) if not val_real.empty else 0.0
 
         val_hist = df_hist.loc[df_hist["sub_id"]==sub_id, "media_6m"]
-        media6 = round(float(val_hist.iloc[0]), 2) if not val_hist.empty else 0.0
+        media6 = float(val_hist.iloc[0]) if not val_hist.empty else 0.0
 
         linhas.append({
             "Sub_id": sub_id,
             "Tipo": tipo,
             "Categoria": cat,
             "Subcategoria": sub,
-            "Média 6m": round(media6, 2),
-            "Planejado": round(planejado, 2),
-            "Realizado": round(realizado, 2),
-            "Diferença": round(realizado - planejado, 2)
+            "Média 6m": media6,
+            "Planejado": planejado,
+            "Realizado": realizado,
+            "Diferença": realizado - planejado
         })
 
     df_mes = pd.DataFrame(linhas)
@@ -1087,10 +1090,10 @@ elif menu == "Planejamento":
                 "Tipo": tipo,
                 "Categoria": f"TOTAL {tipo.upper()}",
                 "Subcategoria": "",
-                "Média 6m": 0.0,
-                "Planejado": round(df_g["Planejado"].sum(), 2),
-                "Realizado": round(df_g["Realizado"].sum(), 2),
-                "Diferença": round(df_g["Diferença"].sum(), 2)
+                "Média 6m": None,
+                "Planejado": df_g["Planejado"].sum(),
+                "Realizado": df_g["Realizado"].sum(),
+                "Diferença": df_g["Diferença"].sum()
             }
             grupos.append(df_g)
             grupos.append(pd.DataFrame([total_row]))
@@ -1102,20 +1105,33 @@ elif menu == "Planejamento":
         "Tipo": "TOTAL",
         "Categoria": "TOTAL GERAL",
         "Subcategoria": "",
-        "Média 6m": 0.0,
-        "Planejado": round(df_mes["Planejado"].sum(), 2),
-        "Realizado": round(df_mes["Realizado"].sum(), 2),
-        "Diferença": round(df_mes["Diferença"].sum(), 2)
+        "Média 6m": None,
+        "Planejado": df_mes["Planejado"].sum(),
+        "Realizado": df_mes["Realizado"].sum(),
+        "Diferença": df_mes["Diferença"].sum()
     }
     df_mes = pd.concat([df_mes, pd.DataFrame([total_geral])], ignore_index=True)
 
-    # grid editável só no Planejado (exceto linhas de TOTAL)
+    # 🔹 garante numéricos
+    for col in ["Média 6m", "Planejado", "Realizado", "Diferença"]:
+        df_mes[col] = pd.to_numeric(df_mes[col], errors="coerce")
+
+    df_display = df_mes.drop(columns=["Sub_id"]).copy()
+
+    # --- formatadores JS ---
+    value_formatter = """
+    function(params) {
+        if (params.value == null) return '';
+        return params.value.toLocaleString('pt-BR',
+            {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+    """
     cellstyle_jscode = """
     function(params) {
         if (params.data.Categoria && params.data.Categoria.toUpperCase().includes("TOTAL GERAL")) {
             return {
                 'font-weight': 'bold',
-                'backgroundColor': '#444444',
+                'backgroundColor': params.data.Diferença >= 0 ? '#2e7d32' : '#c62828',
                 'color': 'white'
             }
         }
@@ -1129,25 +1145,11 @@ elif menu == "Planejamento":
     }
     """
 
-    # mantém os números como float
-    df_display = df_mes.drop(columns=["Sub_id"]).copy()
-
-    # valueFormatter em JS para formatar estilo brasileiro
-    value_formatter = """
-    function(params) {
-        if (params.value == null) return '';
-        return params.value.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-    }
-    """
-
+    # --- grid ---
     gb = GridOptionsBuilder.from_dataframe(df_display)
     gb.configure_default_column(editable=False, resizable=True)
-
-    # Planejado editável
     gb.configure_column("Planejado", editable=True, type=["numericColumn"],
                         valueFormatter=value_formatter, cellStyle=cellstyle_jscode)
-
-    # outras colunas numéricas só exibem formatadas
     for col in ["Média 6m", "Realizado", "Diferença"]:
         gb.configure_column(col, type=["numericColumn"],
                             valueFormatter=value_formatter, cellStyle=cellstyle_jscode)
@@ -1163,7 +1165,7 @@ elif menu == "Planejamento":
     )
     df_editado = pd.DataFrame(grid["data"])
 
-    # botão salvar (ignora linhas de TOTAL)
+    # botão salvar
     if st.button("💾 Salvar planejamento"):
         cursor.execute("DELETE FROM planejado WHERE ano=? AND mes=?", (ano_sel, mes_sel))
         for _, row in df_editado.iterrows():
