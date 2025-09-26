@@ -738,6 +738,19 @@ elif menu == "Importação":
     else:
         conta_sel = st.selectbox("Conta destino", contas_db)
 
+        # ----- MAPA CATEGORIA/SUB -----
+        cursor.execute(
+            """
+                SELECT s.id, s.nome, c.nome
+                FROM subcategorias s
+                JOIN categorias c ON s.categoria_id = c.id
+                ORDER BY c.nome, s.nome
+            """
+        )
+        cat_sub_map = {"Nenhuma": None}
+        for sid, s_nome, c_nome in cursor.fetchall():
+            cat_sub_map[f"{c_nome} → {s_nome}"] = sid
+
         # Upload de arquivo
         arquivo = st.file_uploader("Selecione o arquivo (CSV, XLSX ou XLS)", type=["csv", "xlsx", "xls"])
 
@@ -907,8 +920,19 @@ elif menu == "Importação":
                     # Exibe preview editável
                     gb = GridOptionsBuilder.from_dataframe(df_preview)
                     gb.configure_default_column(editable=True)
-                    gb.configure_column("Parcelado?", editable=True, cellEditor="agSelectCellEditor",
-                                        cellEditorParams={"values": ["True", "False"]})
+                    gb.configure_column(
+                        "Parcelado?",
+                        editable=True,
+                        cellEditor="agSelectCellEditor",
+                        cellEditorParams={"values": ["True", "False"]},
+                    )
+                    gb.configure_column(
+                        "Sugestão Categoria/Sub",
+                        editable=True,
+                        cellEditor="agSelectCellEditor",
+                        cellEditorParams={"values": list(cat_sub_map.keys())},
+                    )
+                    gb.configure_column("sub_id_sugerido", hide=True)
                     grid = AgGrid(
                         df_preview,
                         gridOptions=gb.build(),
@@ -919,7 +943,11 @@ elif menu == "Importação":
                         height=400
                     )
                     df_preview_editado = pd.DataFrame(grid["data"])
-            
+                    if not df_preview_editado.empty and "Sugestão Categoria/Sub" in df_preview_editado.columns:
+                        df_preview_editado["sub_id_sugerido"] = df_preview_editado[
+                            "Sugestão Categoria/Sub"
+                        ].map(lambda val: cat_sub_map.get(val, None))
+
                     # ---------- IMPORTAR ----------
                     if st.button("Importar lançamentos"):
                         from calendar import monthrange
