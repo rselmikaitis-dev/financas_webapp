@@ -105,7 +105,20 @@ def garantir_schema(conn):
         )
     """)
     conn.commit()
+    
+import unicodedata as _ud
+import re as _re
 
+def _normalize_desc(s: str) -> str:
+    s = str(s or "").lower().strip()
+    s = _ud.normalize("NFKD", s).encode("ascii", "ignore").decode()
+    s = _re.sub(r"\d+/\d+", " ", s)   # remove parcelas 09/10
+    s = _re.sub(r"\d+", " ", s)       # remove números soltos
+    s = _re.sub(r"[^\w\s]", " ", s)   # remove pontuação
+    s = _re.sub(r"\b(compra|pagamento|parcela|autorizado|debito|credito|loja|transacao)\b", " ", s)
+    s = _re.sub(r"\s+", " ", s)
+    return s.strip()
+    
 def atualizar_desc_norm(conn):
     """Preenche a coluna desc_norm para lançamentos antigos"""
     cursor = conn.cursor()
@@ -213,19 +226,6 @@ try:
     from rapidfuzz import process, fuzz
 except Exception:
     process = fuzz = None  # roda sem quebrar caso não esteja instalado
-
-import unicodedata as _ud
-import re as _re
-
-def _normalize_desc(s: str) -> str:
-    s = str(s or "").lower().strip()
-    s = _ud.normalize("NFKD", s).encode("ascii", "ignore").decode()
-    s = _re.sub(r"\d+/\d+", " ", s)   # remove parcelas 09/10
-    s = _re.sub(r"\d+", " ", s)       # remove números soltos
-    s = _re.sub(r"[^\w\s]", " ", s)   # remove pontuação
-    s = _re.sub(r"\b(compra|pagamento|parcela|autorizado|debito|credito|loja|transacao)\b", " ", s)
-    s = _re.sub(r"\s+", " ", s)
-    return s.strip()
 
 def _build_hist_similaridade(conn, conta=None):
     """
