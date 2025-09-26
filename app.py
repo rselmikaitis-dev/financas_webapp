@@ -817,15 +817,20 @@ elif menu == "Importação":
                                 return int(m.group(1)), int(m.group(2))
                         return None, None
                     
-                    parcelas_atuais, parcelas_totais = [], []
-                    for _, r in df_preview.iterrows():
-                        p_atual, p_total = detectar_parcela(str(r["Descrição"]))
-                        parcelas_atuais.append(p_atual if p_atual else 1)
-                        parcelas_totais.append(p_total if p_total else 1)
-                    
-                    df_preview["Parcela atual"] = parcelas_atuais
-                    df_preview["Parcelas totais"] = parcelas_totais
-                    df_preview["Parcelado?"] = [p > 1 for p in parcelas_totais]
+                    if is_cartao_credito(conta_sel):
+                        parcelas_atuais, parcelas_totais = [], []
+                        for _, r in df_preview.iterrows():
+                            p_atual, p_total = detectar_parcela(str(r["Descrição"]))
+                            parcelas_atuais.append(p_atual if p_atual else 1)
+                            parcelas_totais.append(p_total if p_total else 1)
+
+                        df_preview["Parcela atual"] = parcelas_atuais
+                        df_preview["Parcelas totais"] = parcelas_totais
+                        df_preview["Parcelado?"] = [p > 1 for p in parcelas_totais]
+                    else:
+                        df_preview["Parcela atual"] = 1
+                        df_preview["Parcelas totais"] = 1
+                        df_preview["Parcelado?"] = False
                     
                     # 🔹 tenta sugerir categoria/subcategoria
                     sugestoes, sub_ids = [], []
