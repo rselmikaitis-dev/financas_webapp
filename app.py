@@ -1118,7 +1118,17 @@ elif menu == "Planejamento":
             "Diferença": round(realizado - planejado, 2)
         })
 
-    df_mes = pd.DataFrame(linhas)
+    colunas_planejamento = [
+        "Sub_id",
+        "Tipo",
+        "Categoria",
+        "Subcategoria",
+        "Média 6m",
+        "Planejado",
+        "Realizado",
+        "Diferença",
+    ]
+    df_mes = pd.DataFrame(linhas, columns=colunas_planejamento)
 
     # 🔹 adiciona totais por grupo
     grupos = []
@@ -1137,7 +1147,10 @@ elif menu == "Planejamento":
             }
             grupos.append(df_g)
             grupos.append(pd.DataFrame([total_row]))
-    df_mes = pd.concat(grupos, ignore_index=True)
+    if grupos:
+        df_mes = pd.concat(grupos, ignore_index=True)
+    else:
+        df_mes = df_mes.reset_index(drop=True)
 
     # 🔹 adiciona total geral
     total_geral = {
