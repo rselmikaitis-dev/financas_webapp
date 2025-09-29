@@ -1232,13 +1232,15 @@ elif menu == "Configurações":
         if st.button("Baixar todos os dados"):
             import io, zipfile
             buffer = io.BytesIO()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             with zipfile.ZipFile(buffer, "w") as zf:
                 for nome_tabela in ["contas", "categorias", "subcategorias", "transactions"]:
                     df = pd.read_sql_query(f"SELECT * FROM {nome_tabela}", conn)
                     csv_bytes = df.to_csv(index=False).encode("utf-8")
                     zf.writestr(f"{nome_tabela}.csv", csv_bytes)
             buffer.seek(0)
-            st.download_button("⬇️ Clique aqui para baixar backup.zip", buffer, file_name="backup_financas.zip")
+            file_name = f"backup_financas_{timestamp}.zip"
+            st.download_button("⬇️ Clique aqui para baixar backup.zip", buffer, file_name=file_name)
 
         st.markdown("---")
 
