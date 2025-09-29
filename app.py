@@ -900,9 +900,18 @@ elif menu == "Importação":
                             continue
 
                         try:
-                            val = round(float(val), 2)
-                        except:
-                            val = 0.0
+                            val = float(val)
+                        except (TypeError, ValueError):
+                            duplicados.append(False)
+                            continue
+
+                        if eh_cartao and mes_ref_cc and ano_ref_cc:
+                            if val > 0:
+                                val = -abs(val)
+                            else:
+                                val = abs(val)
+
+                        val = round(val, 2)
 
                         desc_norm = _normalize_desc(desc)
 
