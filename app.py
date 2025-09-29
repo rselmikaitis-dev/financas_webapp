@@ -1156,7 +1156,7 @@ elif menu == "Planejamento":
     for col in ["Média 6m", "Planejado", "Realizado", "Diferença"]:
         df_mes[col] = pd.to_numeric(df_mes[col], errors="coerce").fillna(0.0)
 
-    df_display = df_mes.drop(columns=["Sub_id"]).copy()
+    df_display = df_mes.copy()
     df_display["Categoria"] = df_display["Categoria"].astype(str)
     df_display["Subcategoria"] = df_display["Subcategoria"].astype(str)
 
@@ -1164,6 +1164,7 @@ elif menu == "Planejamento":
     gb = GridOptionsBuilder.from_dataframe(df_display)
     gb.configure_default_column(editable=False, resizable=True)
     gb.configure_column("Planejado", editable=True)
+    gb.configure_column("Sub_id", hide=True)
     grid = AgGrid(
         df_display,
         gridOptions=gb.build(),
@@ -1181,7 +1182,13 @@ elif menu == "Planejamento":
         for _, row in df_editado.iterrows():
             if "TOTAL" in str(row["Categoria"]).upper():
                 continue
-            sub_id = int(df_mes.loc[df_mes["Subcategoria"]==row["Subcategoria"], "Sub_id"].iloc[0])
+            sub_id = row.get("Sub_id")
+            if pd.isna(sub_id) or sub_id in (None, ""):
+                continue
+            try:
+                sub_id = int(sub_id)
+            except (TypeError, ValueError):
+                continue
             try:
                 val = float(row["Planejado"]) if row["Planejado"] not in (None,"","NaN") else 0.0
             except Exception:
