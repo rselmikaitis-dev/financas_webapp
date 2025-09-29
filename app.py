@@ -977,9 +977,21 @@ elif menu == "Importação":
                                     sub_id = None
                             else:
                                 dt_base = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
-                                if not isinstance(dt_base, date):
-                                    continue
                                 sub_id = r.get("sub_id_sugerido", None)
+
+                            if pd.isna(dt_base):
+                                st.warning(
+                                    f"Lançamento '{desc_original}' ignorado por data inválida."
+                                )
+                                continue
+
+                            if isinstance(dt_base, pd.Timestamp):
+                                dt_base = dt_base.date()
+                            elif isinstance(dt_base, datetime):
+                                dt_base = dt_base.date()
+
+                            if not isinstance(dt_base, date):
+                                continue
 
                             p_atual = int(r.get("Parcela atual", 1) or 1)
                             p_total = int(r.get("Parcelas totais", 1) or 1)
@@ -1005,6 +1017,17 @@ elif menu == "Importação":
                             if p_total > p_atual:
                                 for p in range(p_atual + 1, p_total + 1):
                                     dt_nova = dt_base + relativedelta(months=(p - p_atual))
+
+                                    if pd.isna(dt_nova):
+                                        st.warning(
+                                            f"Parcela {p}/{p_total} de '{desc_original}' ignorada por data inválida."
+                                        )
+                                        continue
+
+                                    if isinstance(dt_nova, pd.Timestamp):
+                                        dt_nova = dt_nova.date()
+                                    elif isinstance(dt_nova, datetime):
+                                        dt_nova = dt_nova.date()
                                     cursor.execute("""
                                         SELECT 1 FROM transactions
                                         WHERE date=? AND value=? AND account=? 
