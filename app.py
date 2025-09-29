@@ -822,13 +822,10 @@ elif menu == "Importação":
 
                     # ---------- PRÉ-VISUALIZAÇÃO ----------
                     st.subheader("Pré-visualização")
-                    
-                    # 🔹 histórico de classificações já feitas
-                    hist = _build_hist_similaridade(conn, conta_sel)
-                    
+
                     df_preview = df.copy()
                     df_preview["Conta destino"] = conta_sel
-                    
+
                     # Se for cartão → ajusta data
                     if eh_cartao and mes_ref_cc and ano_ref_cc:
                         from calendar import monthrange
@@ -837,6 +834,17 @@ elif menu == "Importação":
                         df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
                     else:
                         df_preview["Data efetiva"] = pd.to_datetime(df_preview["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
+
+                    total_registros = len(df_preview)
+                    soma_valores = df_preview["Valor"].fillna(0).astype(float).sum()
+                    valor_formatado = f"R$ {soma_valores:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+                    st.markdown(
+                        f"**{total_registros}** registros · Soma dos valores: **{valor_formatado}**"
+                    )
+
+                    # 🔹 histórico de classificações já feitas
+                    hist = _build_hist_similaridade(conn, conta_sel)
 
                     # Detecta parcelas automáticas no texto
                     def detectar_parcela(desc: str):
