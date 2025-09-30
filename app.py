@@ -1236,13 +1236,13 @@ elif menu == "Planejamento":
         cols_resumo = st.columns(len(resumo_por_tipo) + 1)
         for col_st, (_, linha) in zip(cols_resumo[:-1], resumo_por_tipo.iterrows()):
             col_st.metric(
-                label=linha["Tipo"],
-                value=f"Planejado: R$ {linha['Planejado']:.2f}",
+                label=f"{linha['Tipo']} – Planejado",
+                value=f"R$ {linha['Planejado']:.2f}",
                 delta=f"Realizado: R$ {linha['Realizado']:.2f} | Dif: R$ {linha['Diferença']:.2f}"
             )
         cols_resumo[-1].metric(
-            label="Total Geral",
-            value=f"Planejado: R$ {total_geral['Planejado']:.2f}",
+            label="Total Geral – Planejado",
+            value=f"R$ {total_geral['Planejado']:.2f}",
             delta=f"Realizado: R$ {total_geral['Realizado']:.2f} | Dif: R$ {total_geral['Diferença']:.2f}"
         )
     else:
