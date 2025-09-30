@@ -321,7 +321,7 @@ def _apply_parcela_in_desc(desc: str, p: int, total: int) -> str:
 with st.sidebar:
     menu = option_menu(
         "Menu",
-        ["Dashboard Principal", "Lançamentos", "Importação", "Planejamento", "Configurações"],
+        ["Dashboard", "Lançamentos", "Importação", "Planejamento", "Configurações"],
         menu_icon=None,
         icons=["", "", "", "", ""],
         default_index=0
@@ -330,8 +330,8 @@ with st.sidebar:
 # =====================
 # DASHBOARD PRINCIPAL (Heatmap + Detalhamento por Item/Mês)
 # =====================
-if menu == "Dashboard Principal":
-    st.header("📊 Dashboard Principal (Visão Anual)")
+if menu == "Dashboard":
+    st.header("📊 Dashboard (Visão Anual)")
 
     df_lanc = read_table_transactions(conn)
 
