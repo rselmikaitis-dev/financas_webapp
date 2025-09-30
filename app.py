@@ -1171,71 +1171,86 @@ elif menu == "Planejamento":
     ]
     df_mes = pd.DataFrame(linhas, columns=colunas_planejamento)
 
-    # 🔹 adiciona totais por grupo
-    grupos = []
-    for tipo in ["Receita", "Despesa Fixa", "Despesa Variável"]:
-        df_g = df_mes[df_mes["Tipo"] == tipo]
-        if not df_g.empty:
-            total_row = {
-                "Sub_id": None,
-                "Tipo": tipo,
-                "Categoria": f"TOTAL {tipo.upper()}",
-                "Subcategoria": "",
-                "Média 6m": 0.0,
-                "Planejado": round(df_g["Planejado"].sum(), 2),
-                "Realizado": round(df_g["Realizado"].sum(), 2),
-                "Diferença": round(df_g["Diferença"].sum(), 2)
-            }
-            grupos.append(df_g)
-            grupos.append(pd.DataFrame([total_row]))
-    if grupos:
-        df_mes = pd.concat(grupos, ignore_index=True)
+    tipos_planejamento = ["Receita", "Investimento", "Despesa Fixa", "Despesa Variável"]
+    df_vazio = pd.DataFrame(columns=colunas_planejamento)
+    dfs_por_tipo = {}
+    for tipo in tipos_planejamento:
+        df_tipo = df_mes[df_mes["Tipo"] == tipo].copy()
+        if df_tipo.empty:
+            df_tipo = df_vazio.copy()
+        dfs_por_tipo[tipo] = df_tipo
+
+    tabs = st.tabs([f"{tipo}" for tipo in tipos_planejamento])
+    editados = {}
+    for tab, tipo in zip(tabs, tipos_planejamento):
+        with tab:
+            df_tipo = dfs_por_tipo[tipo].copy()
+            for col in ["Média 6m", "Planejado", "Realizado", "Diferença"]:
+                df_tipo[col] = pd.to_numeric(df_tipo[col], errors="coerce").fillna(0.0)
+
+            df_display = df_tipo.copy()
+            df_display["Categoria"] = df_display["Categoria"].astype(str)
+            df_display["Subcategoria"] = df_display["Subcategoria"].astype(str)
+
+            gb = GridOptionsBuilder.from_dataframe(df_display)
+            gb.configure_default_column(editable=False, resizable=True)
+            gb.configure_column("Planejado", editable=True)
+            gb.configure_column("Sub_id", hide=True)
+            grid_response = AgGrid(
+                df_display,
+                gridOptions=gb.build(),
+                update_mode=GridUpdateMode.VALUE_CHANGED,
+                data_return_mode="AS_INPUT",
+                fit_columns_on_grid_load=True,
+                theme="balham",
+                height=400,
+                key=f"grid_{tipo.lower()}"
+            )
+            df_editado_tipo = pd.DataFrame(grid_response.get("data", []))
+            if df_editado_tipo.empty:
+                df_editado_tipo = df_tipo.copy()
+            df_editado_tipo = df_editado_tipo.reindex(columns=colunas_planejamento)
+            editados[tipo] = df_editado_tipo.copy()
+
+    dfs_validos = [df for df in editados.values() if not df.empty]
+    if dfs_validos:
+        df_consolidado = pd.concat(dfs_validos, ignore_index=True)
     else:
-        df_mes = df_mes.reset_index(drop=True)
+        df_consolidado = df_vazio.copy()
 
-    # 🔹 adiciona total geral
-    total_geral = {
-        "Sub_id": None,
-        "Tipo": "TOTAL",
-        "Categoria": "TOTAL GERAL",
-        "Subcategoria": "",
-        "Média 6m": 0.0,
-        "Planejado": round(df_mes["Planejado"].sum(), 2),
-        "Realizado": round(df_mes["Realizado"].sum(), 2),
-        "Diferença": round(df_mes["Diferença"].sum(), 2)
-    }
-    df_mes = pd.concat([df_mes, pd.DataFrame([total_geral])], ignore_index=True)
+    for col in ["Média 6m", "Planejado", "Realizado"]:
+        df_consolidado[col] = pd.to_numeric(df_consolidado[col], errors="coerce").fillna(0.0)
+    df_consolidado["Diferença"] = df_consolidado["Realizado"] - df_consolidado["Planejado"]
 
-    # 🔹 saneamento antes do grid
-    for col in ["Média 6m", "Planejado", "Realizado", "Diferença"]:
-        df_mes[col] = pd.to_numeric(df_mes[col], errors="coerce").fillna(0.0)
+    resumo_por_tipo = pd.DataFrame()
+    if not df_consolidado.empty:
+        resumo_por_tipo = (
+            df_consolidado
+            .groupby("Tipo")[ ["Planejado", "Realizado", "Diferença"] ]
+            .sum()
+            .reset_index()
+        )
 
-    df_display = df_mes.copy()
-    df_display["Categoria"] = df_display["Categoria"].astype(str)
-    df_display["Subcategoria"] = df_display["Subcategoria"].astype(str)
+    if not resumo_por_tipo.empty:
+        total_geral = resumo_por_tipo[["Planejado", "Realizado", "Diferença"]].sum()
+        cols_resumo = st.columns(len(resumo_por_tipo) + 1)
+        for col_st, (_, linha) in zip(cols_resumo[:-1], resumo_por_tipo.iterrows()):
+            col_st.metric(
+                label=linha["Tipo"],
+                value=f"Planejado: R$ {linha['Planejado']:.2f}",
+                delta=f"Realizado: R$ {linha['Realizado']:.2f} | Dif: R$ {linha['Diferença']:.2f}"
+            )
+        cols_resumo[-1].metric(
+            label="Total Geral",
+            value=f"Planejado: R$ {total_geral['Planejado']:.2f}",
+            delta=f"Realizado: R$ {total_geral['Realizado']:.2f} | Dif: R$ {total_geral['Diferença']:.2f}"
+        )
+    else:
+        st.info("Nenhum dado de planejamento disponível para o período selecionado.")
 
-    # grid editável só no Planejado (exceto linhas de TOTAL)
-    gb = GridOptionsBuilder.from_dataframe(df_display)
-    gb.configure_default_column(editable=False, resizable=True)
-    gb.configure_column("Planejado", editable=True)
-    gb.configure_column("Sub_id", hide=True)
-    grid = AgGrid(
-        df_display,
-        gridOptions=gb.build(),
-        update_mode=GridUpdateMode.VALUE_CHANGED,
-        data_return_mode="AS_INPUT",
-        fit_columns_on_grid_load=True,
-        theme="balham",
-        height=600
-    )
-    df_editado = pd.DataFrame(grid["data"])
-
-    # botão salvar (ignora linhas de TOTAL)
     if st.button("💾 Salvar planejamento"):
         cursor.execute("DELETE FROM planejado WHERE ano=? AND mes=?", (ano_sel, mes_sel))
-        for _, row in df_editado.iterrows():
-            if "TOTAL" in str(row["Categoria"]).upper():
-                continue
+        for _, row in df_consolidado.iterrows():
             sub_id = row.get("Sub_id")
             if pd.isna(sub_id) or sub_id in (None, ""):
                 continue
@@ -1244,7 +1259,7 @@ elif menu == "Planejamento":
             except (TypeError, ValueError):
                 continue
             try:
-                val = float(row["Planejado"]) if row["Planejado"] not in (None,"","NaN") else 0.0
+                val = float(row["Planejado"]) if row["Planejado"] not in (None, "", "NaN") else 0.0
             except Exception:
                 val = 0.0
             cursor.execute(
