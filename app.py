@@ -1087,6 +1087,9 @@ elif menu == "Importação":
 # =====================
 elif menu == "Planejamento":
     st.header("📅 Planejamento Mensal")
+    st.caption(
+        "Os lançamentos parcelados do mês são exibidos em 'Parcelado mês' e servem como sugestão inicial para o valor planejado."
+    )
 
     # Selecionar ano e mês
     anos = list(range(2020, datetime.today().year + 2))
@@ -1118,6 +1121,16 @@ elif menu == "Planejamento":
         FROM transactions t
         LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
         WHERE strftime('%Y', t.date)=? AND strftime('%m', t.date)=?
+        GROUP BY s.id
+    """, conn, params=(str(ano_sel), f"{mes_sel:02d}"))
+
+    # 🔹 parcelas já lançadas para o mês selecionado
+    df_parcelado = pd.read_sql_query("""
+        SELECT s.id as sub_id, SUM(t.value) as parcelado
+        FROM transactions t
+        LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
+        WHERE strftime('%Y', t.date)=? AND strftime('%m', t.date)=?
+          AND t.parcelas_totais > 1
         GROUP BY s.id
     """, conn, params=(str(ano_sel), f"{mes_sel:02d}"))
 
@@ -1153,7 +1166,14 @@ elif menu == "Planejamento":
         tipo = row["tipo"]
 
         val_plan = df_plan.loc[df_plan["subcategoria_id"]==sub_id, "valor"]
-        planejado = float(val_plan.iloc[0]) if not val_plan.empty else 0.0
+
+        val_parc = df_parcelado.loc[df_parcelado["sub_id"]==sub_id, "parcelado"]
+        parcelado_mes = float(val_parc.iloc[0]) if not val_parc.empty else 0.0
+
+        if not val_plan.empty:
+            planejado = float(val_plan.iloc[0])
+        else:
+            planejado = parcelado_mes
 
         val_real = df_real.loc[df_real["sub_id"]==sub_id, "realizado"]
         realizado = float(val_real.iloc[0]) if not val_real.empty else 0.0
@@ -1167,6 +1187,7 @@ elif menu == "Planejamento":
             "Categoria": cat,
             "Subcategoria": sub,
             "Média 6m": round(media6, 2),
+            "Parcelado mês": round(parcelado_mes, 2),
             "Planejado": round(planejado, 2),
             "Realizado": round(realizado, 2),
             "Diferença": round(realizado - planejado, 2)
@@ -1178,6 +1199,7 @@ elif menu == "Planejamento":
         "Categoria",
         "Subcategoria",
         "Média 6m",
+        "Parcelado mês",
         "Planejado",
         "Realizado",
         "Diferença",
@@ -1198,7 +1220,7 @@ elif menu == "Planejamento":
     for tab, tipo in zip(tabs, tipos_planejamento):
         with tab:
             df_tipo = dfs_por_tipo[tipo].copy()
-            for col in ["Média 6m", "Planejado", "Realizado", "Diferença"]:
+            for col in ["Média 6m", "Parcelado mês", "Planejado", "Realizado", "Diferença"]:
                 df_tipo[col] = pd.to_numeric(df_tipo[col], errors="coerce").fillna(0.0)
 
             df_display = df_tipo.copy()
@@ -1209,6 +1231,7 @@ elif menu == "Planejamento":
             gb.configure_default_column(editable=False, resizable=True)
             gb.configure_column("Planejado", editable=True)
             gb.configure_column("Sub_id", hide=True)
+            gb.configure_column("Parcelado mês", editable=False)
             grid_response = AgGrid(
                 df_display,
                 gridOptions=gb.build(),
@@ -1231,7 +1254,7 @@ elif menu == "Planejamento":
     else:
         df_consolidado = df_vazio.copy()
 
-    for col in ["Média 6m", "Planejado", "Realizado"]:
+    for col in ["Média 6m", "Parcelado mês", "Planejado", "Realizado"]:
         df_consolidado[col] = pd.to_numeric(df_consolidado[col], errors="coerce").fillna(0.0)
     df_consolidado["Diferença"] = df_consolidado["Realizado"] - df_consolidado["Planejado"]
 
