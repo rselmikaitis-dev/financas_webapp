@@ -1124,12 +1124,25 @@ elif menu == "Planejamento":
     # 🔹 histórico últimos 6 meses
     seis_meses_atras = date(ano_sel, mes_sel, 1) - pd.DateOffset(months=6)
     df_hist = pd.read_sql_query("""
-        SELECT s.id as sub_id, AVG(t.value) as media_6m
-        FROM transactions t
-        LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
-        WHERE date(t.date) >= ? AND date(t.date) < ?
-        GROUP BY s.id
-    """, conn, params=(seis_meses_atras.strftime("%Y-%m-%d"), date(ano_sel, mes_sel, 1).strftime("%Y-%m-%d")))
+        WITH mensal AS (
+            SELECT
+                s.id AS sub_id,
+                strftime('%Y-%m', t.date) AS ano_mes,
+                SUM(t.value) AS total_mes
+            FROM transactions t
+            LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
+            WHERE date(t.date) >= ? AND date(t.date) < ?
+            GROUP BY s.id, ano_mes
+        )
+        SELECT
+            sub_id,
+            COALESCE(SUM(total_mes) / NULLIF(COUNT(*), 0), 0.0) AS media_6m
+        FROM mensal
+        GROUP BY sub_id
+    """, conn, params=(
+        seis_meses_atras.strftime("%Y-%m-%d"),
+        date(ano_sel, mes_sel, 1).strftime("%Y-%m-%d"),
+    ))
 
     # monta base
     linhas = []
