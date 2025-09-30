@@ -382,8 +382,8 @@ if menu == "Dashboard":
                 linhas["Despesas Fixas"].append(fix)
                 linhas["Despesas Variáveis"].append(var)
 
-            # adiciona linha Lucro/Prejuízo
-            lucro_prejuizo = [
+            # adiciona linha Resultado Mensal
+            resultado_mensal = [
                 linhas["Receitas"][i] - (
                     linhas["Investimentos"][i] +
                     linhas["Despesas Fixas"][i] +
@@ -391,10 +391,10 @@ if menu == "Dashboard":
                 )
                 for i in range(12)
             ]
-            linhas["Lucro/Prejuízo"] = lucro_prejuizo
+            linhas["Resultado Mensal"] = resultado_mensal
 
             # força a ordem desejada
-            ordem = ["Receitas", "Investimentos", "Despesas Fixas", "Despesas Variáveis", "Lucro/Prejuízo"]
+            ordem = ["Receitas", "Investimentos", "Despesas Fixas", "Despesas Variáveis", "Resultado Mensal"]
 
             # monta dataframe base
             df_valores = pd.DataFrame({
@@ -428,7 +428,7 @@ if menu == "Dashboard":
                 for j, col in enumerate(cols):
                     rec = float(rec_series[col]) if col in rec_series else 0.0
                     val = float(Z[i, j])
-                    if item in ("Receitas", "Lucro/Prejuízo") or rec == 0:
+                    if item in ("Receitas", "Resultado Mensal") or rec == 0:
                         linha.append("")
                     else:
                         linha.append(f"{(val/rec*100):.1f}%")
@@ -456,13 +456,13 @@ if menu == "Dashboard":
                 xgap=2, ygap=2
             ))
 
-            # --- Camada Lucro/Prejuízo (verde/vermelho) ---
-            lucro_idx = items.index("Lucro/Prejuízo")
-            z_lucro = np.full_like(Z, np.nan, dtype=float)
-            z_lucro[lucro_idx, :] = Z[lucro_idx, :]
+            # --- Camada Resultado Mensal (verde/vermelho) ---
+            resultado_idx = items.index("Resultado Mensal")
+            z_resultado = np.full_like(Z, np.nan, dtype=float)
+            z_resultado[resultado_idx, :] = Z[resultado_idx, :]
 
             fig.add_trace(go.Heatmap(
-                z=z_lucro,
+                z=z_resultado,
                 x=cols,
                 y=items,
                 text=Text,
@@ -475,6 +475,7 @@ if menu == "Dashboard":
                     "% s/ Receita: %{customdata}<extra></extra>"
                 ),
                 colorscale=[[0, "#f8d4d4"], [0.5, "#f9f9f9"], [1, "#d4f8d4"]],
+                zmid=0,
                 showscale=False,
                 xgap=2, ygap=2
             ))
