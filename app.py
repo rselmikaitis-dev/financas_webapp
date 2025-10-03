@@ -105,7 +105,30 @@ def garantir_schema(conn):
         )
     """)
     conn.commit()
-    
+
+
+def sanear_ids_transactions(conn):
+    cursor = conn.cursor()
+    invalid_rows = cursor.execute(
+        "SELECT rowid, id FROM transactions WHERE typeof(id) != 'integer' OR id IS NULL"
+    ).fetchall()
+    if not invalid_rows:
+        return 0
+
+    max_id_row = cursor.execute(
+        "SELECT COALESCE(MAX(CASE WHEN typeof(id)='integer' THEN id END), 0) FROM transactions"
+    ).fetchone()
+    max_id = max_id_row[0] if max_id_row and max_id_row[0] is not None else 0
+
+    corrigidos = 0
+    for rowid, _ in invalid_rows:
+        max_id += 1
+        cursor.execute("UPDATE transactions SET id=? WHERE rowid=?", (max_id, rowid))
+        corrigidos += 1
+
+    conn.commit()
+    return corrigidos
+
 import unicodedata as _ud
 import re as _re
 
@@ -149,6 +172,11 @@ else:
 
 # 🔹 Garante que tabelas e colunas existam
 garantir_schema(conn)
+
+# 🔹 Corrige IDs inválidos
+corrigidos_ids = sanear_ids_transactions(conn)
+if corrigidos_ids:
+    print(f"[sanear_ids_transactions] Corrigidos {corrigidos_ids} id(s) inválido(s) em transactions")
 
 # 🔹 Atualiza desc_norm retroativamente (executa sempre, mas só muda se estiver vazio/diferente)
 atualizar_desc_norm(conn)
