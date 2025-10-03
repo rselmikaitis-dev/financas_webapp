@@ -1357,10 +1357,6 @@ elif menu == "Configurações":
                 conn = sqlite3.connect("data.db", check_same_thread=False)
                 st.session_state.conn = conn
                 cursor = conn.cursor()
-                # Recria o banco
-                conn = sqlite3.connect("data.db", check_same_thread=False)
-                st.session_state.conn = conn
-                cursor = conn.cursor()
                 
                 # 🔹 Garante a estrutura mínima do banco (função única)
                 garantir_schema(conn)
@@ -1386,30 +1382,6 @@ elif menu == "Configurações":
                 
                     conn.commit()
                 
-                st.success("✅ Backup restaurado com sucesso! IDs preservados.")
-                st.rerun()
-
-                # 🔹 Restaura os dados do backup
-                with zipfile.ZipFile(uploaded_backup, "r") as zf:
-                    for tabela in ["contas", "categorias", "subcategorias", "transactions"]:
-                        if f"{tabela}.csv" not in zf.namelist():
-                            st.error(f"{tabela}.csv não encontrado no backup")
-                            st.stop()
-                        df = pd.read_csv(zf.open(f"{tabela}.csv"))
-
-                        if "id" in df.columns:
-                            cols = df.columns.tolist()
-                            placeholders = ",".join(["?"] * len(cols))
-                            colnames = ",".join(cols)
-                            cursor.executemany(
-                                f"INSERT INTO {tabela} ({colnames}) VALUES ({placeholders})",
-                                df.itertuples(index=False, name=None)
-                            )
-                        else:
-                            df.to_sql(tabela, conn, if_exists="append", index=False)
-
-                    conn.commit()
-
                 st.success("✅ Backup restaurado com sucesso! IDs preservados.")
                 st.rerun()
 
