@@ -3,6 +3,7 @@ import sqlite3
 import bcrypt
 import pandas as pd
 import streamlit as st
+import numpy as np
 from datetime import date, datetime, timedelta
 from streamlit_option_menu import option_menu
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
@@ -390,6 +391,18 @@ if menu == "Dashboard":
             # ignora transferências
             df_ano = df_ano[df_ano["categoria"] != "Transferências"].copy()
 
+            # aplica fallback de tipo para lançamentos sem classificação
+            df_ano_enriquecido = df_ano.copy()
+            tipo_fallback = np.where(
+                df_ano_enriquecido["value"] >= 0,
+                "Receita",
+                "Despesa Variável",
+            )
+            df_ano_enriquecido["tipo"] = df_ano_enriquecido["tipo"].where(
+                df_ano_enriquecido["tipo"].notna(),
+                tipo_fallback,
+            )
+
             meses_nomes = {
                 1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
                 7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"
@@ -404,7 +417,7 @@ if menu == "Dashboard":
             }
 
             for mes in range(1, 13):
-                df_mes = df_ano[df_ano["Mês"] == mes].copy()
+                df_mes = df_ano_enriquecido[df_ano_enriquecido["Mês"] == mes].copy()
                 if df_mes.empty:
                     rec = inv = fix = var = 0.0
                 else:
@@ -466,7 +479,6 @@ if menu == "Dashboard":
                         linha.append(f"{(val/rec*100):.1f}%")
                 custom_pct.append(linha)
 
-            import numpy as np
             import plotly.graph_objects as go
 
             # --- Heatmap base ---
@@ -531,7 +543,7 @@ if menu == "Dashboard":
             mes_escolhido = col_det2.selectbox("Mês", list(meses_nomes.values()), key="det_mes")
             mes_num = meses_nomes_inv[mes_escolhido]
 
-            df_mes = df_ano[df_ano["Mês"] == mes_num].copy()
+            df_mes = df_ano_enriquecido[df_ano_enriquecido["Mês"] == mes_num].copy()
 
             tipo_map = {
                 "Receitas": "Receita",
