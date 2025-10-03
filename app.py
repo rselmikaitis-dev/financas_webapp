@@ -195,6 +195,14 @@ def parse_date(val):
     except Exception:
         return pd.NaT
 
+def brl_fmt(v):
+    try:
+        v = float(v)
+    except Exception:
+        return "-"
+    s = f"{abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return ("-R$ " if v < 0 else "R$ ") + s
+
 def ultimo_dia_do_mes(ano: int, mes: int) -> int:
     if mes == 12:
         return 31
@@ -402,15 +410,6 @@ if menu == "Dashboard":
                 **{meses_nomes[m]: [linhas[k][m-1] for k in ordem] for m in range(1, 13)},
                 "Total Anual": [sum(linhas[k]) for k in ordem]
             })
-
-            # --- formata R$ ---
-            def brl_fmt(v):
-                try:
-                    v = float(v)
-                except:
-                    return "-"
-                s = f"{abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                return ("-R$ " if v < 0 else "R$ ") + s
 
             # --- prepara matriz ---
             cols = [c for c in df_valores.columns if c != "Item"]
@@ -689,9 +688,24 @@ elif menu == "Lançamentos":
             selected_ids = [int(r.get("ID")) for r in sel_obj if isinstance(r, dict) and r.get("ID") is not None]
 
     # ----- TOTAL E SOMA -----
-    soma_valores = dfv["Valor"].sum() if not dfv.empty else 0
+    if dfv.empty:
+        entradas = saidas_abs = total_liquido = 0.0
+    else:
+        entradas = dfv.loc[dfv["Valor"] > 0, "Valor"].sum()
+        saidas_abs = abs(dfv.loc[dfv["Valor"] < 0, "Valor"].sum())
+        total_liquido = entradas - saidas_abs
+
     st.markdown(
-        f"**Total de lançamentos exibidos: {len(dfv_display)} | Soma dos valores: R$ {soma_valores:,.2f}**"
+        "**"
+        + " | ".join(
+            [
+                f"Total de lançamentos exibidos: {len(dfv_display)}",
+                f"Entradas: {brl_fmt(entradas)}",
+                f"Saídas: {brl_fmt(saidas_abs)}",
+                f"Resultado líquido: {brl_fmt(total_liquido)}",
+            ]
+        )
+        + "**"
     )
 
     # ----- BOTÕES -----
