@@ -659,6 +659,13 @@ elif menu == "Lançamentos":
     meses = ["Todos"] + [meses_nomes[m] for m in range(1, 13)]
     mes_filtro = col5.selectbox("Mês", meses, key="flt_mes")
 
+    filters_state = (conta_filtro, cat_filtro, sub_filtro, ano_filtro, mes_filtro)
+    if "grid_last_filters" not in st.session_state:
+        st.session_state["grid_last_filters"] = filters_state
+    elif st.session_state["grid_last_filters"] != filters_state:
+        st.session_state["grid_last_filters"] = filters_state
+        st.session_state["grid_refresh"] = st.session_state.get("grid_refresh", 0) + 1
+
     # ----- APLICA FILTROS -----
     dfv = df_lanc.copy()
     if conta_filtro != "Todas":
