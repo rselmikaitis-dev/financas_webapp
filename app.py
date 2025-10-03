@@ -1087,9 +1087,6 @@ elif menu == "Importação":
 # =====================
 elif menu == "Planejamento":
     st.header("📅 Planejamento Mensal")
-    st.caption(
-        "Os lançamentos parcelados do mês são exibidos em 'Parcelado mês' e servem como sugestão inicial para o valor planejado."
-    )
 
     # Selecionar ano e mês
     anos = list(range(2020, datetime.today().year + 2))
@@ -1121,16 +1118,6 @@ elif menu == "Planejamento":
         FROM transactions t
         LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
         WHERE strftime('%Y', t.date)=? AND strftime('%m', t.date)=?
-        GROUP BY s.id
-    """, conn, params=(str(ano_sel), f"{mes_sel:02d}"))
-
-    # 🔹 parcelas já lançadas para o mês selecionado
-    df_parcelado = pd.read_sql_query("""
-        SELECT s.id as sub_id, SUM(t.value) as parcelado
-        FROM transactions t
-        LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
-        WHERE strftime('%Y', t.date)=? AND strftime('%m', t.date)=?
-          AND t.parcelas_totais > 1
         GROUP BY s.id
     """, conn, params=(str(ano_sel), f"{mes_sel:02d}"))
 
@@ -1166,14 +1153,7 @@ elif menu == "Planejamento":
         tipo = row["tipo"]
 
         val_plan = df_plan.loc[df_plan["subcategoria_id"]==sub_id, "valor"]
-
-        val_parc = df_parcelado.loc[df_parcelado["sub_id"]==sub_id, "parcelado"]
-        parcelado_mes = float(val_parc.iloc[0]) if not val_parc.empty else 0.0
-
-        if not val_plan.empty:
-            planejado = float(val_plan.iloc[0])
-        else:
-            planejado = parcelado_mes
+        planejado = float(val_plan.iloc[0]) if not val_plan.empty else 0.0
 
         val_real = df_real.loc[df_real["sub_id"]==sub_id, "realizado"]
         realizado = float(val_real.iloc[0]) if not val_real.empty else 0.0
@@ -1187,7 +1167,6 @@ elif menu == "Planejamento":
             "Categoria": cat,
             "Subcategoria": sub,
             "Média 6m": round(media6, 2),
-            "Parcelado mês": round(parcelado_mes, 2),
             "Planejado": round(planejado, 2),
             "Realizado": round(realizado, 2),
             "Diferença": round(realizado - planejado, 2)
@@ -1199,7 +1178,6 @@ elif menu == "Planejamento":
         "Categoria",
         "Subcategoria",
         "Média 6m",
-        "Parcelado mês",
         "Planejado",
         "Realizado",
         "Diferença",
@@ -1220,7 +1198,7 @@ elif menu == "Planejamento":
     for tab, tipo in zip(tabs, tipos_planejamento):
         with tab:
             df_tipo = dfs_por_tipo[tipo].copy()
-            for col in ["Média 6m", "Parcelado mês", "Planejado", "Realizado", "Diferença"]:
+            for col in ["Média 6m", "Planejado", "Realizado", "Diferença"]:
                 df_tipo[col] = pd.to_numeric(df_tipo[col], errors="coerce").fillna(0.0)
 
             df_display = df_tipo.copy()
@@ -1231,7 +1209,6 @@ elif menu == "Planejamento":
             gb.configure_default_column(editable=False, resizable=True)
             gb.configure_column("Planejado", editable=True)
             gb.configure_column("Sub_id", hide=True)
-            gb.configure_column("Parcelado mês", editable=False)
             grid_response = AgGrid(
                 df_display,
                 gridOptions=gb.build(),
@@ -1254,7 +1231,7 @@ elif menu == "Planejamento":
     else:
         df_consolidado = df_vazio.copy()
 
-    for col in ["Média 6m", "Parcelado mês", "Planejado", "Realizado"]:
+    for col in ["Média 6m", "Planejado", "Realizado"]:
         df_consolidado[col] = pd.to_numeric(df_consolidado[col], errors="coerce").fillna(0.0)
     df_consolidado["Diferença"] = df_consolidado["Realizado"] - df_consolidado["Planejado"]
 
@@ -1367,127 +1344,43 @@ elif menu == "Configurações":
                 
                 # 🔹 Restaura os dados do backup
                 with zipfile.ZipFile(uploaded_backup, "r") as zf:
-                    numeric_columns = {
-                        "contas": {"id": int, "dia_vencimento": int},
-                        "categorias": {"id": int},
-                        "subcategorias": {"id": int, "categoria_id": int},
-                        "transactions": {
-                            "id": int,
-                            "value": float,
-                            "subcategoria_id": int,
-                            "parcela_atual": int,
-                            "parcelas_totais": int,
-                        },
-                    }
-
                     for tabela in ["contas", "categorias", "subcategorias", "transactions"]:
                         if f"{tabela}.csv" not in zf.namelist():
                             st.error(f"{tabela}.csv não encontrado no backup")
                             st.stop()
-
                         df = pd.read_csv(zf.open(f"{tabela}.csv"))
-                        df = df.where(pd.notnull(df), None)
-
-                        if "id" in df.columns:
-                            original_ids = df["id"].copy()
-                            df["id"] = pd.to_numeric(df["id"], errors="coerce")
-                            if df["id"].isna().any():
-                                invalid_rows = [
-                                    f"linha {idx + 1} (valor original: {original_ids.loc[idx]!r})"
-                                    for idx in df.index[df["id"].isna()]
-                                ]
-                                st.error(
-                                    "Não foi possível restaurar a tabela "
-                                    f"{tabela}: IDs inválidos encontrados: "
-                                    + ", ".join(invalid_rows)
-                                )
-                                st.stop()
-                            df["id"] = df["id"].astype("Int64").astype(int)
-
-                        for coluna, caster in numeric_columns.get(tabela, {}).items():
-                            if coluna in df.columns:
-                                if coluna == "id":
-                                    continue
-                                serie_numerica = pd.to_numeric(df[coluna], errors="raise")
-                                df[coluna] = [
-                                    None if pd.isna(valor) else caster(valor)
-                                    for valor in serie_numerica
-                                ]
-
+                
                         if "id" in df.columns:
                             cols = df.columns.tolist()
                             placeholders = ",".join(["?"] * len(cols))
                             colnames = ",".join(cols)
-                            registros = list(df.itertuples(index=False, name=None))
                             cursor.executemany(
                                 f"INSERT INTO {tabela} ({colnames}) VALUES ({placeholders})",
-                                registros,
+                                df.itertuples(index=False, name=None)
                             )
                         else:
                             df.to_sql(tabela, conn, if_exists="append", index=False)
-
+                
                     conn.commit()
-
+                
                 st.success("✅ Backup restaurado com sucesso! IDs preservados.")
                 st.rerun()
 
                 # 🔹 Restaura os dados do backup
                 with zipfile.ZipFile(uploaded_backup, "r") as zf:
-                    numeric_columns = {
-                        "contas": {"id": int, "dia_vencimento": int},
-                        "categorias": {"id": int},
-                        "subcategorias": {"id": int, "categoria_id": int},
-                        "transactions": {
-                            "id": int,
-                            "value": float,
-                            "subcategoria_id": int,
-                            "parcela_atual": int,
-                            "parcelas_totais": int,
-                        },
-                    }
-
                     for tabela in ["contas", "categorias", "subcategorias", "transactions"]:
                         if f"{tabela}.csv" not in zf.namelist():
                             st.error(f"{tabela}.csv não encontrado no backup")
                             st.stop()
-
                         df = pd.read_csv(zf.open(f"{tabela}.csv"))
-                        df = df.where(pd.notnull(df), None)
-
-                        if "id" in df.columns:
-                            original_ids = df["id"].copy()
-                            df["id"] = pd.to_numeric(df["id"], errors="coerce")
-                            if df["id"].isna().any():
-                                invalid_rows = [
-                                    f"linha {idx + 1} (valor original: {original_ids.loc[idx]!r})"
-                                    for idx in df.index[df["id"].isna()]
-                                ]
-                                st.error(
-                                    "Não foi possível restaurar a tabela "
-                                    f"{tabela}: IDs inválidos encontrados: "
-                                    + ", ".join(invalid_rows)
-                                )
-                                st.stop()
-                            df["id"] = df["id"].astype("Int64").astype(int)
-
-                        for coluna, caster in numeric_columns.get(tabela, {}).items():
-                            if coluna in df.columns:
-                                if coluna == "id":
-                                    continue
-                                serie_numerica = pd.to_numeric(df[coluna], errors="raise")
-                                df[coluna] = [
-                                    None if pd.isna(valor) else caster(valor)
-                                    for valor in serie_numerica
-                                ]
 
                         if "id" in df.columns:
                             cols = df.columns.tolist()
                             placeholders = ",".join(["?"] * len(cols))
                             colnames = ",".join(cols)
-                            registros = list(df.itertuples(index=False, name=None))
                             cursor.executemany(
                                 f"INSERT INTO {tabela} ({colnames}) VALUES ({placeholders})",
-                                registros,
+                                df.itertuples(index=False, name=None)
                             )
                         else:
                             df.to_sql(tabela, conn, if_exists="append", index=False)
