@@ -408,10 +408,15 @@ if menu == "Dashboard":
                 if df_mes.empty:
                     rec = inv = fix = var = 0.0
                 else:
-                    rec = df_mes[df_mes["tipo"] == "Receita"]["value"].sum()
-                    inv = abs(df_mes[df_mes["tipo"] == "Investimento"]["value"].sum())
-                    fix = abs(df_mes[df_mes["tipo"] == "Despesa Fixa"]["value"].sum())
-                    var = abs(df_mes[df_mes["tipo"] == "Despesa Variável"]["value"].sum())
+                    receitas = df_mes[df_mes["tipo"] == "Receita"]["value"]
+                    investimentos = df_mes[df_mes["tipo"] == "Investimento"]["value"]
+                    despesas_fixas = df_mes[df_mes["tipo"] == "Despesa Fixa"]["value"]
+                    despesas_variaveis = df_mes[df_mes["tipo"] == "Despesa Variável"]["value"]
+
+                    rec = receitas[receitas > 0].sum()
+                    inv = abs(investimentos[investimentos < 0].sum())
+                    fix = abs(despesas_fixas[despesas_fixas < 0].sum())
+                    var = abs(despesas_variaveis[despesas_variaveis < 0].sum())
 
                 linhas["Receitas"].append(rec)
                 linhas["Investimentos"].append(inv)
