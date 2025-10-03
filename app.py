@@ -679,13 +679,28 @@ elif menu == "Lançamentos":
         df_editado = pd.DataFrame(columns=dfv_display.columns)
 
     # Seleção
-    selected_ids = []
+    selected_ids: list[int] = []
+    invalid_selected_ids = 0
+    selected_rows_count = 0
     if "selected_rows" in grid:
         sel_obj = grid["selected_rows"]
         if isinstance(sel_obj, pd.DataFrame) and "ID" in sel_obj.columns:
-            selected_ids = [int(x) for x in sel_obj["ID"].dropna().tolist()]
+            selected_rows_count = len(sel_obj)
+            id_series = pd.to_numeric(sel_obj["ID"], errors="coerce").dropna()
+            selected_ids = id_series.astype(int).tolist()
+            invalid_selected_ids = selected_rows_count - len(selected_ids)
         elif isinstance(sel_obj, list):
-            selected_ids = [int(r.get("ID")) for r in sel_obj if isinstance(r, dict) and r.get("ID") is not None]
+            raw_ids = [r.get("ID") for r in sel_obj if isinstance(r, dict)]
+            selected_rows_count = len(raw_ids)
+            id_series = pd.to_numeric(pd.Series(raw_ids), errors="coerce").dropna()
+            selected_ids = id_series.astype(int).tolist()
+            invalid_selected_ids = selected_rows_count - len(selected_ids)
+    if selected_rows_count > 0 and not selected_ids:
+        st.info("Nenhum ID válido foi identificado nos itens selecionados.")
+    elif invalid_selected_ids > 0:
+        st.warning(
+            f"{invalid_selected_ids} registro(s) selecionado(s) foram ignorados por conter IDs inválidos."
+        )
 
     # ----- TOTAL E SOMA -----
     if dfv.empty:
@@ -713,18 +728,29 @@ elif menu == "Lançamentos":
     with col1b:
         if st.button("💾 Salvar alterações"):
             updated = 0
+            invalid_updates = 0
             for _, row in df_editado.iterrows():
                 sub_id = cat_sub_map.get(row.get("Categoria/Subcategoria", "Nenhuma"), None)
+                id_series = pd.to_numeric(pd.Series([row.get("ID")]), errors="coerce").dropna()
+                if id_series.empty:
+                    invalid_updates += 1
+                    continue
+
+                record_id = int(id_series.iloc[0])
                 try:
                     cursor.execute(
                         "UPDATE transactions SET subcategoria_id=? WHERE id=?",
-                        (sub_id, int(row["ID"]))
+                        (sub_id, record_id)
                     )
                     updated += 1
                 except Exception:
-                    pass
+                    invalid_updates += 1
             conn.commit()
             st.success(f"{updated} lançamentos atualizados com sucesso!")
+            if invalid_updates:
+                st.warning(
+                    f"{invalid_updates} registro(s) não puderam ser atualizado(s) devido a IDs inválidos."
+                )
 
             # força recarregar os dados e aplicar filtros de novo
             if "df_lanc" in st.session_state:
