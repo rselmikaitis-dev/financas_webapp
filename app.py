@@ -704,14 +704,25 @@ elif menu == "Lançamentos":
         key=f"grid_lancamentos_{st.session_state['grid_refresh']}"
     )
 
-    # Data editada
+    # DataFrame com dados efetivamente exibidos no grid (após filtros client-side)
     grid_data = grid.get("data", None)
-    if isinstance(grid_data, list) and len(grid_data) > 0:
-        df_editado = pd.DataFrame(grid_data)
-    elif isinstance(grid_data, pd.DataFrame):
-        df_editado = grid_data.copy()
+    grid_has_client_data = isinstance(grid_data, (pd.DataFrame, list))
+    if isinstance(grid_data, pd.DataFrame):
+        df_grid_filtered = grid_data.copy()
+    elif isinstance(grid_data, list):
+        df_grid_filtered = pd.DataFrame(grid_data)
     else:
-        df_editado = pd.DataFrame(columns=dfv_display.columns)
+        df_grid_filtered = dfv_display.copy()
+
+    if df_grid_filtered.empty:
+        df_grid_filtered = df_grid_filtered.reindex(columns=dfv_display.columns)
+    else:
+        missing_cols = [c for c in dfv_display.columns if c not in df_grid_filtered.columns]
+        for col in missing_cols:
+            df_grid_filtered[col] = None
+        df_grid_filtered = df_grid_filtered[dfv_display.columns]
+
+    df_editado = df_grid_filtered.copy()
 
     # Seleção
     selected_ids: list[int] = []
@@ -738,18 +749,29 @@ elif menu == "Lançamentos":
         )
 
     # ----- TOTAL E SOMA -----
-    if dfv.empty:
-        entradas = saidas_abs = total_liquido = 0.0
+    if grid_has_client_data:
+        df_totais = df_grid_filtered.copy()
     else:
-        entradas = dfv.loc[dfv["Valor"] > 0, "Valor"].sum()
-        saidas_abs = abs(dfv.loc[dfv["Valor"] < 0, "Valor"].sum())
-        total_liquido = entradas - saidas_abs
+        df_totais = dfv.copy()
+
+    valores_series = pd.Series(dtype=float)
+    if not df_totais.empty and "Valor" in df_totais.columns:
+        valores_series = pd.to_numeric(df_totais["Valor"], errors="coerce").fillna(0.0)
+
+    entradas = valores_series[valores_series > 0].sum()
+    saidas_abs = abs(valores_series[valores_series < 0].sum())
+    total_liquido = entradas - saidas_abs
+
+    if not grid_has_client_data and df_totais.empty:
+        displayed_count = len(dfv_display)
+    else:
+        displayed_count = len(df_grid_filtered)
 
     st.markdown(
         "**"
         + " | ".join(
             [
-                f"Total de lançamentos exibidos: {len(dfv_display)}",
+                f"Total de lançamentos exibidos: {displayed_count}",
                 f"Entradas: {brl_fmt(entradas)}",
                 f"Saídas: {brl_fmt(saidas_abs)}",
                 f"Resultado líquido: {brl_fmt(total_liquido)}",
