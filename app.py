@@ -1367,43 +1367,91 @@ elif menu == "Configurações":
                 
                 # 🔹 Restaura os dados do backup
                 with zipfile.ZipFile(uploaded_backup, "r") as zf:
+                    numeric_columns = {
+                        "contas": {"id": int, "dia_vencimento": int},
+                        "categorias": {"id": int},
+                        "subcategorias": {"id": int, "categoria_id": int},
+                        "transactions": {
+                            "id": int,
+                            "value": float,
+                            "subcategoria_id": int,
+                            "parcela_atual": int,
+                            "parcelas_totais": int,
+                        },
+                    }
+
                     for tabela in ["contas", "categorias", "subcategorias", "transactions"]:
                         if f"{tabela}.csv" not in zf.namelist():
                             st.error(f"{tabela}.csv não encontrado no backup")
                             st.stop()
+
                         df = pd.read_csv(zf.open(f"{tabela}.csv"))
-                
+                        df = df.where(pd.notnull(df), None)
+
+                        for coluna, caster in numeric_columns.get(tabela, {}).items():
+                            if coluna in df.columns:
+                                serie_numerica = pd.to_numeric(df[coluna], errors="raise")
+                                df[coluna] = [
+                                    None if pd.isna(valor) else caster(valor)
+                                    for valor in serie_numerica
+                                ]
+
                         if "id" in df.columns:
                             cols = df.columns.tolist()
                             placeholders = ",".join(["?"] * len(cols))
                             colnames = ",".join(cols)
+                            registros = [tuple(linha) for linha in df.to_numpy(dtype=object)]
                             cursor.executemany(
                                 f"INSERT INTO {tabela} ({colnames}) VALUES ({placeholders})",
-                                df.itertuples(index=False, name=None)
+                                registros,
                             )
                         else:
                             df.to_sql(tabela, conn, if_exists="append", index=False)
-                
+
                     conn.commit()
-                
+
                 st.success("✅ Backup restaurado com sucesso! IDs preservados.")
                 st.rerun()
 
                 # 🔹 Restaura os dados do backup
                 with zipfile.ZipFile(uploaded_backup, "r") as zf:
+                    numeric_columns = {
+                        "contas": {"id": int, "dia_vencimento": int},
+                        "categorias": {"id": int},
+                        "subcategorias": {"id": int, "categoria_id": int},
+                        "transactions": {
+                            "id": int,
+                            "value": float,
+                            "subcategoria_id": int,
+                            "parcela_atual": int,
+                            "parcelas_totais": int,
+                        },
+                    }
+
                     for tabela in ["contas", "categorias", "subcategorias", "transactions"]:
                         if f"{tabela}.csv" not in zf.namelist():
                             st.error(f"{tabela}.csv não encontrado no backup")
                             st.stop()
+
                         df = pd.read_csv(zf.open(f"{tabela}.csv"))
+                        df = df.where(pd.notnull(df), None)
+
+                        for coluna, caster in numeric_columns.get(tabela, {}).items():
+                            if coluna in df.columns:
+                                serie_numerica = pd.to_numeric(df[coluna], errors="raise")
+                                df[coluna] = [
+                                    None if pd.isna(valor) else caster(valor)
+                                    for valor in serie_numerica
+                                ]
 
                         if "id" in df.columns:
                             cols = df.columns.tolist()
                             placeholders = ",".join(["?"] * len(cols))
                             colnames = ",".join(cols)
+                            registros = [tuple(linha) for linha in df.to_numpy(dtype=object)]
                             cursor.executemany(
                                 f"INSERT INTO {tabela} ({colnames}) VALUES ({placeholders})",
-                                df.itertuples(index=False, name=None)
+                                registros,
                             )
                         else:
                             df.to_sql(tabela, conn, if_exists="append", index=False)
