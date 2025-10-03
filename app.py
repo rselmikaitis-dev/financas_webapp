@@ -1388,8 +1388,26 @@ elif menu == "Configurações":
                         df = pd.read_csv(zf.open(f"{tabela}.csv"))
                         df = df.where(pd.notnull(df), None)
 
+                        if "id" in df.columns:
+                            original_ids = df["id"].copy()
+                            df["id"] = pd.to_numeric(df["id"], errors="coerce")
+                            if df["id"].isna().any():
+                                invalid_rows = [
+                                    f"linha {idx + 1} (valor original: {original_ids.loc[idx]!r})"
+                                    for idx in df.index[df["id"].isna()]
+                                ]
+                                st.error(
+                                    "Não foi possível restaurar a tabela "
+                                    f"{tabela}: IDs inválidos encontrados: "
+                                    + ", ".join(invalid_rows)
+                                )
+                                st.stop()
+                            df["id"] = df["id"].astype("Int64").astype(int)
+
                         for coluna, caster in numeric_columns.get(tabela, {}).items():
                             if coluna in df.columns:
+                                if coluna == "id":
+                                    continue
                                 serie_numerica = pd.to_numeric(df[coluna], errors="raise")
                                 df[coluna] = [
                                     None if pd.isna(valor) else caster(valor)
@@ -1400,7 +1418,7 @@ elif menu == "Configurações":
                             cols = df.columns.tolist()
                             placeholders = ",".join(["?"] * len(cols))
                             colnames = ",".join(cols)
-                            registros = [tuple(linha) for linha in df.to_numpy(dtype=object)]
+                            registros = list(df.itertuples(index=False, name=None))
                             cursor.executemany(
                                 f"INSERT INTO {tabela} ({colnames}) VALUES ({placeholders})",
                                 registros,
@@ -1436,8 +1454,26 @@ elif menu == "Configurações":
                         df = pd.read_csv(zf.open(f"{tabela}.csv"))
                         df = df.where(pd.notnull(df), None)
 
+                        if "id" in df.columns:
+                            original_ids = df["id"].copy()
+                            df["id"] = pd.to_numeric(df["id"], errors="coerce")
+                            if df["id"].isna().any():
+                                invalid_rows = [
+                                    f"linha {idx + 1} (valor original: {original_ids.loc[idx]!r})"
+                                    for idx in df.index[df["id"].isna()]
+                                ]
+                                st.error(
+                                    "Não foi possível restaurar a tabela "
+                                    f"{tabela}: IDs inválidos encontrados: "
+                                    + ", ".join(invalid_rows)
+                                )
+                                st.stop()
+                            df["id"] = df["id"].astype("Int64").astype(int)
+
                         for coluna, caster in numeric_columns.get(tabela, {}).items():
                             if coluna in df.columns:
+                                if coluna == "id":
+                                    continue
                                 serie_numerica = pd.to_numeric(df[coluna], errors="raise")
                                 df[coluna] = [
                                     None if pd.isna(valor) else caster(valor)
@@ -1448,7 +1484,7 @@ elif menu == "Configurações":
                             cols = df.columns.tolist()
                             placeholders = ",".join(["?"] * len(cols))
                             colnames = ",".join(cols)
-                            registros = [tuple(linha) for linha in df.to_numpy(dtype=object)]
+                            registros = list(df.itertuples(index=False, name=None))
                             cursor.executemany(
                                 f"INSERT INTO {tabela} ({colnames}) VALUES ({placeholders})",
                                 registros,
