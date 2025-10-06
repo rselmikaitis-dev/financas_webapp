@@ -403,6 +403,13 @@ if menu == "Dashboard":
                 tipo_fallback,
             )
 
+            # marca lançamentos totalmente sem categoria/subcategoria
+            mask_sem_categoria = (
+                df_ano_enriquecido["categoria"].isna()
+                & df_ano_enriquecido["subcategoria"].isna()
+            )
+            df_ano_enriquecido.loc[mask_sem_categoria, "tipo"] = "Sem Categoria"
+
             meses_nomes = {
                 1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
                 7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"
@@ -410,45 +417,53 @@ if menu == "Dashboard":
 
             # linhas do relatório
             linhas = {
-                "Receitas": [], 
-                "Investimentos": [], 
-                "Despesas Fixas": [], 
-                "Despesas Variáveis": []
+                "Receitas": [],
+                "Investimentos": [],
+                "Despesas Fixas": [],
+                "Despesas Variáveis": [],
+                "Sem Categoria": [],
             }
+
+            resultado_mensal = []
 
             for mes in range(1, 13):
                 df_mes = df_ano_enriquecido[df_ano_enriquecido["Mês"] == mes].copy()
                 if df_mes.empty:
-                    rec = inv = fix = var = 0.0
+                    rec = inv = fix = var = sem_cat_total = 0.0
                 else:
                     receitas = df_mes[df_mes["tipo"] == "Receita"]["value"]
                     investimentos = df_mes[df_mes["tipo"] == "Investimento"]["value"]
                     despesas_fixas = df_mes[df_mes["tipo"] == "Despesa Fixa"]["value"]
                     despesas_variaveis = df_mes[df_mes["tipo"] == "Despesa Variável"]["value"]
+                    sem_categoria = df_mes[df_mes["tipo"] == "Sem Categoria"]["value"]
 
                     rec = receitas[receitas > 0].sum()
                     inv = abs(investimentos[investimentos < 0].sum())
                     fix = abs(despesas_fixas[despesas_fixas < 0].sum())
                     var = abs(despesas_variaveis[despesas_variaveis < 0].sum())
+                    sem_cat_total = sem_categoria.abs().sum()
+
+                total_mes = float(df_mes["value"].sum()) if not df_mes.empty else 0.0
+                resultado_mensal.append(total_mes)
 
                 linhas["Receitas"].append(rec)
                 linhas["Investimentos"].append(inv)
                 linhas["Despesas Fixas"].append(fix)
                 linhas["Despesas Variáveis"].append(var)
+                linhas["Sem Categoria"].append(sem_cat_total)
 
             # adiciona linha Resultado Mensal
-            resultado_mensal = [
-                linhas["Receitas"][i] - (
-                    linhas["Investimentos"][i] +
-                    linhas["Despesas Fixas"][i] +
-                    linhas["Despesas Variáveis"][i]
-                )
-                for i in range(12)
-            ]
             linhas["Resultado Mensal"] = resultado_mensal
 
             # força a ordem desejada
-            ordem = ["Receitas", "Investimentos", "Despesas Fixas", "Despesas Variáveis", "Resultado Mensal"]
+            ordem = [
+                "Receitas",
+                "Investimentos",
+                "Despesas Fixas",
+                "Despesas Variáveis",
+                "Sem Categoria",
+                "Resultado Mensal",
+            ]
 
             # monta dataframe base
             df_valores = pd.DataFrame({
@@ -536,7 +551,13 @@ if menu == "Dashboard":
             st.markdown("### 🔎 Detalhar composição")
             col_det1, col_det2 = st.columns(2)
 
-            itens_disponiveis = ["Receitas", "Investimentos", "Despesas Fixas", "Despesas Variáveis"]
+            itens_disponiveis = [
+                "Receitas",
+                "Investimentos",
+                "Despesas Fixas",
+                "Despesas Variáveis",
+                "Sem Categoria",
+            ]
             item_escolhido = col_det1.selectbox("Item", itens_disponiveis, key="det_item")
 
             meses_nomes_inv = {v: k for k, v in meses_nomes.items()}
@@ -550,6 +571,7 @@ if menu == "Dashboard":
                 "Investimentos": "Investimento",
                 "Despesas Fixas": "Despesa Fixa",
                 "Despesas Variáveis": "Despesa Variável",
+                "Sem Categoria": "Sem Categoria",
             }
             tipo_sel = tipo_map[item_escolhido]
 
@@ -584,6 +606,8 @@ if menu == "Dashboard":
                     df_listagem = df_filtrado[["date", "description", "value", "account", "categoria", "subcategoria"]].copy()
                     df_listagem["Valor (R$)"] = df_listagem["value"].map(brl_fmt)
                     df_listagem["Data"] = pd.to_datetime(df_listagem["date"], errors="coerce").dt.strftime("%d/%m/%Y")
+                    df_listagem["categoria"] = df_listagem["categoria"].fillna("Nenhuma")
+                    df_listagem["subcategoria"] = df_listagem["subcategoria"].fillna("Nenhuma")
                     df_listagem.rename(columns={
                         "description": "Descrição",
                         "account": "Conta",
