@@ -1,9 +1,11 @@
 import re
 import sqlite3
+from collections import defaultdict
+
 import bcrypt
+import numpy as np
 import pandas as pd
 import streamlit as st
-import numpy as np
 from datetime import date, datetime, timedelta
 from streamlit_option_menu import option_menu
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
@@ -1036,47 +1038,74 @@ elif menu == "Importação":
                     df_preview["sub_id_sugerido"] = sub_ids
                     
                     # 🔹 checa duplicidade usando descrição normalizada
-                    duplicados = []
+                    # 🔹 detecção de duplicados considerando ocorrências repetidas
+                    chaves_preview = []
                     for _, r in df_preview.iterrows():
                         desc = str(r["Descrição"]).strip()
                         val = r["Valor"]
 
                         if val is None:
-                            duplicados.append(False)
+                            chaves_preview.append(None)
                             continue
 
                         try:
-                            val = float(val)
+                            val_f = float(val)
                         except (TypeError, ValueError):
-                            duplicados.append(False)
+                            chaves_preview.append(None)
                             continue
 
                         if eh_cartao and mes_ref_cc and ano_ref_cc:
-                            if val > 0:
-                                val = -abs(val)
+                            if val_f > 0:
+                                val_cmp = -abs(val_f)
                             else:
-                                val = abs(val)
-
-                        val = round(val, 2)
-
-                        desc_norm = _normalize_desc(desc)
-
-                        if eh_cartao and mes_ref_cc and ano_ref_cc:
-                            data_cmp = datetime.strptime(r["Data efetiva"], "%d/%m/%Y").date()
+                                val_cmp = abs(val_f)
+                            try:
+                                data_cmp = datetime.strptime(r["Data efetiva"], "%d/%m/%Y").date()
+                            except Exception:
+                                chaves_preview.append(None)
+                                continue
                         else:
+                            val_cmp = val_f
                             data_cmp = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
 
-                        cursor.execute("""
-                            SELECT 1 FROM transactions
-                             WHERE date=? AND ROUND(value,2)=ROUND(?,2) AND account=? 
-                               AND desc_norm=?
-                        """, (
-                            data_cmp.strftime("%Y-%m-%d") if isinstance(data_cmp, date) else None,
-                            val,
+                        if isinstance(data_cmp, datetime):
+                            data_cmp = data_cmp.date()
+
+                        if not isinstance(data_cmp, date):
+                            chaves_preview.append(None)
+                            continue
+
+                        chave = (
                             conta_sel,
-                            desc_norm
-                        ))
-                        duplicados.append(cursor.fetchone() is not None)
+                            data_cmp.strftime("%Y-%m-%d"),
+                            round(val_cmp, 2),
+                            _normalize_desc(desc),
+                        )
+                        chaves_preview.append(chave)
+
+                    # Conta quantos lançamentos já existem para cada chave
+                    existentes = {}
+                    chaves_validas = {ch for ch in chaves_preview if ch is not None}
+                    for chave in chaves_validas:
+                        cursor.execute(
+                            """
+                                SELECT COUNT(*) FROM transactions
+                                 WHERE account=? AND date=? AND ROUND(value,2)=ROUND(?,2)
+                                   AND desc_norm=?
+                            """,
+                            chave,
+                        )
+                        count = cursor.fetchone()
+                        existentes[chave] = count[0] if count and count[0] else 0
+
+                    vistos = defaultdict(int)
+                    duplicados = []
+                    for chave in chaves_preview:
+                        if chave is None:
+                            duplicados.append(False)
+                            continue
+                        vistos[chave] += 1
+                        duplicados.append(vistos[chave] <= existentes.get(chave, 0))
 
                     df_preview["Já existe?"] = duplicados
                     
