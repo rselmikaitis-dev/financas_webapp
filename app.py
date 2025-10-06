@@ -134,11 +134,26 @@ def sanear_ids_transactions(conn):
 
 
 def deduplicar_transactions(conn) -> int:
-    """Remove lançamentos duplicados mantendo o menor ID de cada grupo."""
+    """Remove duplicados apenas de contas que não são cartão de crédito."""
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
+    contas = cursor.execute(
+        "SELECT DISTINCT account FROM transactions WHERE account IS NOT NULL"
+    ).fetchall()
+
+    def _eh_conta_cartao(nome: str | None) -> bool:
+        nome = (nome or "").strip()
+        if not nome:
+            return False
+        nome_norm = _ud.normalize("NFKD", nome).encode("ASCII", "ignore").decode().lower()
+        return nome_norm.startswith("cartao de credito")
+
+    contas_bancarias = [c[0] for c in contas if not _eh_conta_cartao(c[0])]
+    if not contas_bancarias:
+        return 0
+
+    removidos_total = 0
+    sql = """
         WITH marcados AS (
             SELECT
                 id,
@@ -153,16 +168,20 @@ def deduplicar_transactions(conn) -> int:
                     ORDER BY id
                 ) AS rn
             FROM transactions
+            WHERE account = ?
         )
         DELETE FROM transactions
         WHERE id IN (SELECT id FROM marcados WHERE rn > 1)
-        """
-    )
+    """
 
-    removidos = cursor.rowcount if cursor.rowcount is not None else 0
-    if removidos:
+    for conta in contas_bancarias:
+        cursor.execute(sql, (conta,))
+        if cursor.rowcount:
+            removidos_total += cursor.rowcount
+
+    if removidos_total:
         conn.commit()
-    return removidos
+    return removidos_total
 
 import unicodedata as _ud
 import re as _re
