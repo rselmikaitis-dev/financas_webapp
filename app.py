@@ -132,6 +132,38 @@ def sanear_ids_transactions(conn):
     conn.commit()
     return corrigidos
 
+
+def deduplicar_transactions(conn) -> int:
+    """Remove lançamentos duplicados mantendo o menor ID de cada grupo."""
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        WITH marcados AS (
+            SELECT
+                id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY
+                        account,
+                        date,
+                        ROUND(value, 2),
+                        COALESCE(desc_norm, ''),
+                        COALESCE(parcela_atual, 1),
+                        COALESCE(parcelas_totais, 1)
+                    ORDER BY id
+                ) AS rn
+            FROM transactions
+        )
+        DELETE FROM transactions
+        WHERE id IN (SELECT id FROM marcados WHERE rn > 1)
+        """
+    )
+
+    removidos = cursor.rowcount if cursor.rowcount is not None else 0
+    if removidos:
+        conn.commit()
+    return removidos
+
 import unicodedata as _ud
 import re as _re
 
@@ -183,6 +215,11 @@ if corrigidos_ids:
 
 # 🔹 Atualiza desc_norm retroativamente (executa sempre, mas só muda se estiver vazio/diferente)
 atualizar_desc_norm(conn)
+
+# 🔹 Remove duplicidades indesejadas mantendo o registro mais antigo
+removidos = deduplicar_transactions(conn)
+if removidos:
+    print(f"[deduplicar_transactions] Removidos {removidos} lançamento(s) duplicado(s)")
 
 # 🔹 Cursor pronto
 cursor = conn.cursor()
@@ -1152,11 +1189,13 @@ elif menu == "Importação":
                         for _, r in df_preview_editado.iterrows():
                             if r.get("Já existe?"):
                                 continue
-                            
+
                             desc_original = str(r["Descrição"]).strip()
                             val = r["Valor"]
                             if val is None:
                                 continue
+
+                            desc_norm = _normalize_desc(desc_original)
 
                             if eh_cartao and mes_ref_cc and ano_ref_cc:
                                 dia_final = min(dia_venc_cc or 1, monthrange(ano_ref_cc, mes_ref_cc)[1])
@@ -1188,15 +1227,37 @@ elif menu == "Importação":
                             p_atual = int(r.get("Parcela atual", 1) or 1)
                             p_total = int(r.get("Parcelas totais", 1) or 1)
 
+                            # Checagem final contra duplicidade antes de inserir
+                            cursor.execute(
+                                """
+                                    SELECT 1 FROM transactions
+                                    WHERE account=? AND date=?
+                                      AND ROUND(value, 2)=ROUND(?, 2)
+                                      AND COALESCE(desc_norm, '') = COALESCE(?, '')
+                                      AND COALESCE(parcela_atual, 1) = ?
+                                      AND COALESCE(parcelas_totais, 1) = ?
+                                """,
+                                (
+                                    conta_sel,
+                                    dt_base.strftime("%Y-%m-%d"),
+                                    val,
+                                    desc_norm,
+                                    p_atual,
+                                    p_total,
+                                ),
+                            )
+                            if cursor.fetchone():
+                                continue
+
                             # Inserção preservando descrição original
                             cursor.execute("""
-                                INSERT INTO transactions 
+                                INSERT INTO transactions
                                     (date, description, desc_norm, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
                                 VALUES (?, ?, ?, ?, ?, ?, 'final', ?, ?)
                             """, (
                                 dt_base.strftime("%Y-%m-%d"),
                                 desc_original,
-                                _normalize_desc(desc_original),
+                                desc_norm,
                                 val,
                                 conta_sel,
                                 sub_id,
@@ -1222,15 +1283,18 @@ elif menu == "Importação":
                                         dt_nova = dt_nova.date()
                                     cursor.execute("""
                                         SELECT 1 FROM transactions
-                                        WHERE date=? AND value=? AND account=? 
-                                          AND parcela_atual=? AND parcelas_totais=? AND desc_norm=?
+                                        WHERE account=? AND date=?
+                                          AND ROUND(value, 2)=ROUND(?, 2)
+                                          AND COALESCE(desc_norm, '') = COALESCE(?, '')
+                                          AND COALESCE(parcela_atual, 1) = ?
+                                          AND COALESCE(parcelas_totais, 1) = ?
                                     """, (
+                                        conta_sel,
                                         dt_nova.strftime("%Y-%m-%d"),
                                         val,
-                                        conta_sel,
+                                        desc_norm,
                                         p,
                                         p_total,
-                                        _normalize_desc(desc_original)
                                     ))
                                     if cursor.fetchone():
                                         continue
@@ -1242,7 +1306,7 @@ elif menu == "Importação":
                                     """, (
                                         dt_nova.strftime("%Y-%m-%d"),
                                         desc_original,
-                                        _normalize_desc(desc_original),
+                                        desc_norm,
                                         val,
                                         conta_sel,
                                         sub_id,
