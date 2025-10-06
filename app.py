@@ -104,9 +104,17 @@ def garantir_schema(conn):
             parcela_atual INTEGER DEFAULT 1,
             parcelas_totais INTEGER DEFAULT 1,
             desc_norm TEXT,
+            import_seq INTEGER DEFAULT 1,
+            orig_date TEXT,
             FOREIGN KEY (subcategoria_id) REFERENCES subcategorias(id)
         )
     """)
+    cursor.execute("PRAGMA table_info(transactions)")
+    colunas_trans = [row[1] for row in cursor.fetchall()]
+    if "import_seq" not in colunas_trans:
+        cursor.execute("ALTER TABLE transactions ADD COLUMN import_seq INTEGER DEFAULT 1")
+    if "orig_date" not in colunas_trans:
+        cursor.execute("ALTER TABLE transactions ADD COLUMN orig_date TEXT")
     conn.commit()
 
 
@@ -149,7 +157,9 @@ def deduplicar_transactions(conn) -> int:
                         ROUND(value, 2),
                         COALESCE(desc_norm, ''),
                         COALESCE(parcela_atual, 1),
-                        COALESCE(parcelas_totais, 1)
+                        COALESCE(parcelas_totais, 1),
+                        COALESCE(import_seq, 1),
+                        COALESCE(orig_date, '')
                     ORDER BY id
                 ) AS rn
             FROM transactions
@@ -1011,6 +1021,24 @@ elif menu == "Importação":
                     df_preview = df.copy()
                     df_preview["Conta destino"] = conta_sel
 
+                    def _safe_date_iso(valor):
+                        if isinstance(valor, date):
+                            return valor.strftime("%Y-%m-%d")
+                        if isinstance(valor, datetime):
+                            return valor.date().strftime("%Y-%m-%d")
+                        try:
+                            dt = parse_date(valor)
+                            if isinstance(dt, date):
+                                return dt.strftime("%Y-%m-%d")
+                        except Exception:
+                            pass
+                        return ""
+
+                    df_preview["data_original_iso"] = df_preview["Data"].apply(_safe_date_iso)
+                    df_preview["Data original"] = df_preview["data_original_iso"].apply(
+                        lambda s: datetime.strptime(s, "%Y-%m-%d").strftime("%d/%m/%Y") if s else ""
+                    )
+
                     # Se for cartão → ajusta data
                     if eh_cartao and mes_ref_cc and ano_ref_cc:
                         from calendar import monthrange
@@ -1076,19 +1104,34 @@ elif menu == "Importação":
                     
                     # 🔹 checa duplicidade usando descrição normalizada
                     # 🔹 detecção de duplicados considerando ocorrências repetidas
+                    def _safe_int(val, default=1):
+                        try:
+                            if pd.isna(val):
+                                return default
+                        except TypeError:
+                            pass
+                        try:
+                            return int(float(val))
+                        except (TypeError, ValueError):
+                            return default
+
+                    ocorrencias = defaultdict(int)
                     chaves_preview = []
+                    seq_preview = []
                     for _, r in df_preview.iterrows():
                         desc = str(r["Descrição"]).strip()
                         val = r["Valor"]
 
                         if val is None:
                             chaves_preview.append(None)
+                            seq_preview.append(None)
                             continue
 
                         try:
                             val_f = float(val)
                         except (TypeError, ValueError):
                             chaves_preview.append(None)
+                            seq_preview.append(None)
                             continue
 
                         if eh_cartao and mes_ref_cc and ano_ref_cc:
@@ -1100,6 +1143,7 @@ elif menu == "Importação":
                                 data_cmp = datetime.strptime(r["Data efetiva"], "%d/%m/%Y").date()
                             except Exception:
                                 chaves_preview.append(None)
+                                seq_preview.append(None)
                                 continue
                         else:
                             val_cmp = val_f
@@ -1110,15 +1154,34 @@ elif menu == "Importação":
 
                         if not isinstance(data_cmp, date):
                             chaves_preview.append(None)
+                            seq_preview.append(None)
                             continue
 
-                        chave = (
+                        data_original_iso = str(r.get("data_original_iso") or "").strip()
+                        if not data_original_iso:
+                            data_original_iso = _safe_date_iso(r.get("Data"))
+
+                        p_atual = _safe_int(r.get("Parcela atual", 1))
+                        p_total = _safe_int(r.get("Parcelas totais", 1))
+
+                        chave_base = (
                             conta_sel,
                             data_cmp.strftime("%Y-%m-%d"),
                             round(val_cmp, 2),
                             _normalize_desc(desc),
+                            p_atual,
+                            p_total,
+                            data_original_iso,
                         )
+
+                        ocorrencias[chave_base] += 1
+                        seq_atual = ocorrencias[chave_base]
+
+                        chave = chave_base + (seq_atual,)
                         chaves_preview.append(chave)
+                        seq_preview.append(seq_atual)
+
+                    df_preview["seq_import"] = seq_preview
 
                     # Conta quantos lançamentos já existem para cada chave
                     existentes = {}
@@ -1128,7 +1191,11 @@ elif menu == "Importação":
                             """
                                 SELECT COUNT(*) FROM transactions
                                  WHERE account=? AND date=? AND ROUND(value,2)=ROUND(?,2)
-                                   AND desc_norm=?
+                                   AND COALESCE(desc_norm, '') = COALESCE(?, '')
+                                   AND COALESCE(parcela_atual, 1) = ?
+                                   AND COALESCE(parcelas_totais, 1) = ?
+                                   AND COALESCE(orig_date, '') = COALESCE(?, '')
+                                   AND COALESCE(import_seq, 1) = ?
                             """,
                             chave,
                         )
@@ -1162,6 +1229,9 @@ elif menu == "Importação":
                         cellEditorParams={"values": list(cat_sub_map.keys())},
                     )
                     gb.configure_column("sub_id_sugerido", hide=True)
+                    gb.configure_column("data_original_iso", hide=True)
+                    gb.configure_column("seq_import", hide=True)
+                    gb.configure_column("Data original", editable=False)
                     grid = AgGrid(
                         df_preview,
                         gridOptions=gb.build(),
@@ -1172,6 +1242,10 @@ elif menu == "Importação":
                         height=400
                     )
                     df_preview_editado = pd.DataFrame(grid["data"])
+                    if "seq_import" not in df_preview_editado.columns and "seq_import" in df_preview.columns:
+                        df_preview_editado["seq_import"] = df_preview["seq_import"].values
+                    if "data_original_iso" not in df_preview_editado.columns and "data_original_iso" in df_preview.columns:
+                        df_preview_editado["data_original_iso"] = df_preview["data_original_iso"].values
                     if not df_preview_editado.empty and "Sugestão Categoria/Sub" in df_preview_editado.columns:
                         df_preview_editado["sub_id_sugerido"] = df_preview_editado[
                             "Sugestão Categoria/Sub"
@@ -1183,32 +1257,46 @@ elif menu == "Importação":
                         from dateutil.relativedelta import relativedelta
                     
                         inserted = 0
+                        skipped_existentes = 0
                         hist = _build_hist_similaridade(conn, conta_sel)
-                    
+
                         # Loop de lançamentos
                         for _, r in df_preview_editado.iterrows():
-                            if r.get("Já existe?"):
+                            ja_existe_val = str(r.get("Já existe?", "")).strip().lower()
+                            if ja_existe_val in {"true", "1", "sim"}:
+                                skipped_existentes += 1
                                 continue
 
                             desc_original = str(r["Descrição"]).strip()
-                            val = r["Valor"]
-                            if val is None:
+                            val = r.get("Valor")
+
+                            try:
+                                val_float = float(val)
+                            except (TypeError, ValueError):
                                 continue
 
                             desc_norm = _normalize_desc(desc_original)
+                            data_original_iso = str(r.get("data_original_iso") or "").strip()
+                            if not data_original_iso:
+                                data_original_iso = _safe_date_iso(r.get("Data"))
+
+                            p_atual = _safe_int(r.get("Parcela atual", 1))
+                            p_total = _safe_int(r.get("Parcelas totais", 1))
+                            seq_import = _safe_int(r.get("seq_import", 1))
 
                             if eh_cartao and mes_ref_cc and ano_ref_cc:
                                 dia_final = min(dia_venc_cc or 1, monthrange(ano_ref_cc, mes_ref_cc)[1])
                                 dt_base = date(ano_ref_cc, mes_ref_cc, dia_final)
-                                if val > 0:
-                                    val = -abs(val)
+                                if val_float > 0:
+                                    valor_final = -abs(val_float)
                                     sub_id, _, _ = sugerir_subcategoria(desc_original, hist) if hist else (None, None, 0)
                                 else:
-                                    val = abs(val)
+                                    valor_final = abs(val_float)
                                     sub_id = None
                             else:
                                 dt_base = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
                                 sub_id = r.get("sub_id_sugerido", None)
+                                valor_final = val_float
 
                             if pd.isna(dt_base):
                                 st.warning(
@@ -1224,8 +1312,8 @@ elif menu == "Importação":
                             if not isinstance(dt_base, date):
                                 continue
 
-                            p_atual = int(r.get("Parcela atual", 1) or 1)
-                            p_total = int(r.get("Parcelas totais", 1) or 1)
+                            if not data_original_iso:
+                                data_original_iso = dt_base.strftime("%Y-%m-%d")
 
                             # Checagem final contra duplicidade antes de inserir
                             cursor.execute(
@@ -1236,33 +1324,40 @@ elif menu == "Importação":
                                       AND COALESCE(desc_norm, '') = COALESCE(?, '')
                                       AND COALESCE(parcela_atual, 1) = ?
                                       AND COALESCE(parcelas_totais, 1) = ?
+                                      AND COALESCE(orig_date, '') = COALESCE(?, '')
+                                      AND COALESCE(import_seq, 1) = ?
                                 """,
                                 (
                                     conta_sel,
                                     dt_base.strftime("%Y-%m-%d"),
-                                    val,
+                                    valor_final,
                                     desc_norm,
                                     p_atual,
                                     p_total,
+                                    data_original_iso,
+                                    seq_import,
                                 ),
                             )
                             if cursor.fetchone():
+                                skipped_existentes += 1
                                 continue
 
                             # Inserção preservando descrição original
                             cursor.execute("""
                                 INSERT INTO transactions
-                                    (date, description, desc_norm, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
-                                VALUES (?, ?, ?, ?, ?, ?, 'final', ?, ?)
+                                    (date, description, desc_norm, value, account, subcategoria_id, status, parcela_atual, parcelas_totais, orig_date, import_seq)
+                                VALUES (?, ?, ?, ?, ?, ?, 'final', ?, ?, ?, ?)
                             """, (
                                 dt_base.strftime("%Y-%m-%d"),
                                 desc_original,
                                 desc_norm,
-                                val,
+                                valor_final,
                                 conta_sel,
                                 sub_id,
                                 p_atual,
-                                p_total
+                                p_total,
+                                data_original_iso,
+                                seq_import,
                             ))
                             inserted += 1
 
@@ -1281,42 +1376,59 @@ elif menu == "Importação":
                                         dt_nova = dt_nova.date()
                                     elif isinstance(dt_nova, datetime):
                                         dt_nova = dt_nova.date()
-                                    cursor.execute("""
-                                        SELECT 1 FROM transactions
-                                        WHERE account=? AND date=?
-                                          AND ROUND(value, 2)=ROUND(?, 2)
-                                          AND COALESCE(desc_norm, '') = COALESCE(?, '')
-                                          AND COALESCE(parcela_atual, 1) = ?
-                                          AND COALESCE(parcelas_totais, 1) = ?
-                                    """, (
-                                        conta_sel,
-                                        dt_nova.strftime("%Y-%m-%d"),
-                                        val,
-                                        desc_norm,
-                                        p,
-                                        p_total,
-                                    ))
+                                    cursor.execute(
+                                        """
+                                            SELECT 1 FROM transactions
+                                            WHERE account=? AND date=?
+                                              AND ROUND(value, 2)=ROUND(?, 2)
+                                              AND COALESCE(desc_norm, '') = COALESCE(?, '')
+                                              AND COALESCE(parcela_atual, 1) = ?
+                                              AND COALESCE(parcelas_totais, 1) = ?
+                                              AND COALESCE(orig_date, '') = COALESCE(?, '')
+                                              AND COALESCE(import_seq, 1) = ?
+                                        """,
+                                        (
+                                            conta_sel,
+                                            dt_nova.strftime("%Y-%m-%d"),
+                                            valor_final,
+                                            desc_norm,
+                                            p,
+                                            p_total,
+                                            data_original_iso,
+                                            seq_import,
+                                        ),
+                                    )
                                     if cursor.fetchone():
                                         continue
 
                                     cursor.execute("""
-                                        INSERT INTO transactions 
-                                            (date, description, desc_norm, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
-                                        VALUES (?, ?, ?, ?, ?, ?, 'final', ?, ?)
+                                        INSERT INTO transactions
+                                            (date, description, desc_norm, value, account, subcategoria_id, status, parcela_atual, parcelas_totais, orig_date, import_seq)
+                                        VALUES (?, ?, ?, ?, ?, ?, 'final', ?, ?, ?, ?)
                                     """, (
                                         dt_nova.strftime("%Y-%m-%d"),
                                         desc_original,
                                         desc_norm,
-                                        val,
+                                        valor_final,
                                         conta_sel,
                                         sub_id,
                                         p,
-                                        p_total
+                                        p_total,
+                                        data_original_iso,
+                                        seq_import,
                                     ))
                                     inserted += 1
-                    
+
                         conn.commit()
-                        st.success(f"{inserted} lançamentos (incluindo parcelas futuras) inseridos com sucesso!")
+                        if skipped_existentes:
+                            st.success(
+                                f"{inserted} lançamentos inseridos (incluindo parcelas futuras). "
+                                f"{skipped_existentes} já existiam e foram ignorados."
+                            )
+                        else:
+                            st.success(
+                                f"{inserted} lançamentos (incluindo parcelas futuras) inseridos com sucesso!"
+                            )
                         st.rerun()
             except Exception as e:
                 st.error(f"Erro ao processar arquivo: {e}")
@@ -1836,19 +1948,19 @@ elif menu == "Configurações":
                 c = conn.cursor()
             
                 rows = c.execute("""
-                    SELECT id, date, description, value, account, subcategoria_id, parcela_atual, parcelas_totais
+                    SELECT id, date, description, value, account, subcategoria_id, parcela_atual, parcelas_totais, orig_date, import_seq
                     FROM transactions
                     WHERE parcelas_totais > 1
                     ORDER BY account, description, parcela_atual
                 """).fetchall()
-            
+
                 inseridos = 0
-                for (id_, dt_str, desc, val, conta, sub_id, p_atual, p_total) in rows:
+                for (id_, dt_str, desc, val, conta, sub_id, p_atual, p_total, orig_dt, seq_import) in rows:
                     try:
                         dt_base = datetime.strptime(dt_str, "%Y-%m-%d").date()
                     except Exception:
                         continue
-            
+
                     # gera SEM exigir que seja a 1ª parcela
                     for p in range(p_atual + 1, p_total + 1):
                         nova_data = dt_base + relativedelta(months=(p - p_atual))
@@ -1856,23 +1968,29 @@ elif menu == "Configurações":
             
                         c.execute("""
                             SELECT 1 FROM transactions
-                            WHERE date=? AND description=? AND value=? AND account=? 
+                            WHERE date=? AND description=? AND value=? AND account=?
                               AND parcela_atual=? AND parcelas_totais=?
+                              AND COALESCE(orig_date, '') = COALESCE(?, '')
+                              AND COALESCE(import_seq, 1) = ?
                         """, (
                             nova_data.strftime("%Y-%m-%d"),
                             desc_nova,
                             val,
                             conta,
                             p,
-                            p_total
+                            p_total,
+                            orig_dt or dt_str,
+                            seq_import or 1,
                         ))
                         if c.fetchone():
                             continue
-            
+
+                        orig_base = orig_dt or dt_str
+                        seq_base = seq_import or 1
                         c.execute("""
-                            INSERT INTO transactions 
-                                (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais)
-                            VALUES (?, ?, ?, ?, ?, 'final', ?, ?)
+                            INSERT INTO transactions
+                                (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais, orig_date, import_seq)
+                            VALUES (?, ?, ?, ?, ?, 'final', ?, ?, ?, ?)
                         """, (
                             nova_data.strftime("%Y-%m-%d"),
                             desc_nova,
@@ -1880,7 +1998,9 @@ elif menu == "Configurações":
                             conta,
                             sub_id,
                             p,
-                            p_total
+                            p_total,
+                            orig_base,
+                            seq_base
                         ))
                         inseridos += 1
             
