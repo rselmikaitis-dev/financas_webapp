@@ -1252,12 +1252,15 @@ elif menu == "Importação":
                         ].map(lambda val: cat_sub_map.get(val, None))
 
                     # ---------- IMPORTAR ----------
+                    st.session_state.setdefault("import_log", [])
+
                     if st.button("Importar lançamentos"):
                         from calendar import monthrange
                         from dateutil.relativedelta import relativedelta
-                    
+
                         inserted = 0
                         skipped_existentes = 0
+                        log_entries = []
                         hist = _build_hist_similaridade(conn, conta_sel)
 
                         # Loop de lançamentos
@@ -1265,6 +1268,9 @@ elif menu == "Importação":
                             ja_existe_val = str(r.get("Já existe?", "")).strip().lower()
                             if ja_existe_val in {"true", "1", "sim"}:
                                 skipped_existentes += 1
+                                log_entries.append(
+                                    f"[Ignorado] '{str(r.get('Descrição', '')).strip()}' – marcado como existente na pré-visualização"
+                                )
                                 continue
 
                             desc_original = str(r["Descrição"]).strip()
@@ -1273,6 +1279,9 @@ elif menu == "Importação":
                             try:
                                 val_float = float(val)
                             except (TypeError, ValueError):
+                                log_entries.append(
+                                    f"[Ignorado] '{desc_original}' – valor inválido: {val}"
+                                )
                                 continue
 
                             desc_norm = _normalize_desc(desc_original)
@@ -1302,6 +1311,9 @@ elif menu == "Importação":
                                 st.warning(
                                     f"Lançamento '{desc_original}' ignorado por data inválida."
                                 )
+                                log_entries.append(
+                                    f"[Ignorado] '{desc_original}' – data inválida"
+                                )
                                 continue
 
                             if isinstance(dt_base, pd.Timestamp):
@@ -1310,6 +1322,9 @@ elif menu == "Importação":
                                 dt_base = dt_base.date()
 
                             if not isinstance(dt_base, date):
+                                log_entries.append(
+                                    f"[Ignorado] '{desc_original}' – data não reconhecida"
+                                )
                                 continue
 
                             if not data_original_iso:
@@ -1340,6 +1355,9 @@ elif menu == "Importação":
                             )
                             if cursor.fetchone():
                                 skipped_existentes += 1
+                                log_entries.append(
+                                    f"[Ignorado] '{desc_original}' em {dt_base.strftime('%d/%m/%Y')} – já existe"
+                                )
                                 continue
 
                             # Inserção preservando descrição original
@@ -1360,6 +1378,9 @@ elif menu == "Importação":
                                 seq_import,
                             ))
                             inserted += 1
+                            log_entries.append(
+                                f"[Importado] '{desc_original}' em {dt_base.strftime('%d/%m/%Y')} – valor {valor_final:.2f}"
+                            )
 
                             # Gera parcelas futuras se aplicável
                             if p_total > p_atual:
@@ -1369,6 +1390,9 @@ elif menu == "Importação":
                                     if pd.isna(dt_nova):
                                         st.warning(
                                             f"Parcela {p}/{p_total} de '{desc_original}' ignorada por data inválida."
+                                        )
+                                        log_entries.append(
+                                            f"[Ignorado] Parcela {p}/{p_total} de '{desc_original}' – data inválida"
                                         )
                                         continue
 
@@ -1399,6 +1423,9 @@ elif menu == "Importação":
                                         ),
                                     )
                                     if cursor.fetchone():
+                                        log_entries.append(
+                                            f"[Ignorado] Parcela {p}/{p_total} de '{desc_original}' em {dt_nova.strftime('%d/%m/%Y')} – já existe"
+                                        )
                                         continue
 
                                     cursor.execute("""
@@ -1418,8 +1445,12 @@ elif menu == "Importação":
                                         seq_import,
                                     ))
                                     inserted += 1
+                                    log_entries.append(
+                                        f"[Importado] Parcela {p}/{p_total} de '{desc_original}' em {dt_nova.strftime('%d/%m/%Y')} – valor {valor_final:.2f}"
+                                    )
 
                         conn.commit()
+                        st.session_state["import_log"] = log_entries
                         if skipped_existentes:
                             st.success(
                                 f"{inserted} lançamentos inseridos (incluindo parcelas futuras). "
@@ -1432,6 +1463,22 @@ elif menu == "Importação":
                         st.rerun()
             except Exception as e:
                 st.error(f"Erro ao processar arquivo: {e}")
+                st.session_state.setdefault("import_log", []).append(f"Erro: {e}")
+
+            if st.session_state.get("import_log"):
+                with st.expander("Log de importação", expanded=True):
+                    col_log, col_btn = st.columns([4, 1])
+                    with col_log:
+                        st.text_area(
+                            "Detalhes do log",
+                            value="\n".join(st.session_state.get("import_log", [])),
+                            height=200,
+                            disabled=True,
+                        )
+                    with col_btn:
+                        if st.button("Limpar log"):
+                            st.session_state["import_log"] = []
+                            st.rerun()
 # =====================
 # PLANEJAMENTO (visão mensal)
 # =====================
