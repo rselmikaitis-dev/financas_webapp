@@ -28,6 +28,7 @@ class ItauOpenFinanceConfig:
     transactions_endpoint: str = (
         "/open-banking/accounts/v1/accounts/{account_id}/transactions"
     )
+    consents_endpoint: str = "/open-banking/consents/v1/consents"
     additional_headers: Dict[str, str] = field(default_factory=dict)
     timeout: int = 30
     static_access_token: Optional[str] = None
@@ -155,6 +156,8 @@ class ItauOpenFinanceClient:
         *,
         params: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
+        json: Optional[Dict[str, Any]] = None,
+        data: Optional[Any] = None,
     ) -> requests.Response:
         url = self._resolve_url(path)
         headers = headers.copy() if headers else {}
@@ -168,6 +171,8 @@ class ItauOpenFinanceClient:
                 url,
                 params=params,
                 headers=headers,
+                json=json,
+                data=data,
                 cert=self.config.cert(),
                 timeout=self.config.timeout,
             )
@@ -246,6 +251,47 @@ class ItauOpenFinanceClient:
                 next_url = None
 
         return transactions
+
+    def create_consent(
+        self,
+        *,
+        permissions: Optional[List[str]] = None,
+        expiration_datetime: Optional[str] = None,
+        transaction_from_datetime: Optional[str] = None,
+        transaction_to_datetime: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a consent using the configured credentials."""
+
+        body: Dict[str, Any] = {
+            "data": {
+                "permissions": permissions
+                or [
+                    "ACCOUNTS_READ",
+                    "ACCOUNTS_BALANCES_READ",
+                    "ACCOUNTS_TRANSACTIONS_READ",
+                    "ACCOUNTS_STATEMENTS_READ",
+                ]
+            }
+        }
+        data_payload = body["data"]
+        if expiration_datetime:
+            data_payload["expirationDateTime"] = expiration_datetime
+        if transaction_from_datetime:
+            data_payload["transactionFromDateTime"] = transaction_from_datetime
+        if transaction_to_datetime:
+            data_payload["transactionToDateTime"] = transaction_to_datetime
+
+        response = self._request(
+            "POST",
+            self.config.consents_endpoint,
+            json=body,
+        )
+        payload = response.json()
+        data = payload.get("data") or {}
+        consent_id = data.get("consentId") or payload.get("consentId")
+        if not consent_id:
+            raise OpenFinanceError("Resposta de consentimento sem 'consentId'.")
+        return payload
 
 
 def _safe_float(value: Any) -> Optional[float]:

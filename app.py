@@ -7,9 +7,10 @@ import bcrypt
 import numpy as np
 import pandas as pd
 import streamlit as st
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, time
 from streamlit_option_menu import option_menu
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
+from typing import Optional
 
 from openfinance import (
     ItauOpenFinanceClient,
@@ -1100,6 +1101,12 @@ elif menu == "Importação":
                     help="Ex.: /open-banking/accounts/v1/accounts/{account_id}/transactions",
                 )
                 manual_state["transactions_endpoint"] = transactions_endpoint_manual.strip()
+                consents_endpoint_manual = st.text_input(
+                    "Endpoint de consentimentos (opcional)",
+                    value=manual_state.get("consents_endpoint", ""),
+                    help="Ex.: /open-banking/consents/v1/consents",
+                )
+                manual_state["consents_endpoint"] = consents_endpoint_manual.strip()
 
             col_cert = st.columns(2)
             with col_cert[0]:
@@ -1172,6 +1179,115 @@ elif menu == "Importação":
                     else:
                         transactions_extra_params = parsed_extra
 
+            st.markdown("#### Consentimento Open Finance Itaú")
+            st.caption(
+                "Gere e acompanhe consentimentos seguindo o guia em docs/itau_open_finance_consent.md."
+            )
+            with st.expander("Gerar novo consentimento Itaú", expanded=False):
+                st.write(
+                    "Use as credenciais configuradas acima para criar um novo consentimento com os escopos necessários."
+                )
+                default_permissions = [
+                    "ACCOUNTS_READ",
+                    "ACCOUNTS_BALANCES_READ",
+                    "ACCOUNTS_TRANSACTIONS_READ",
+                    "ACCOUNTS_STATEMENTS_READ",
+                ]
+                permissions_selected = st.multiselect(
+                    "Escopos (permissions)",
+                    default_permissions,
+                    default=default_permissions,
+                    key="itau_consent_permissions",
+                    help="Inclua todos os escopos exigidos pela API de extratos.",
+                )
+
+                today = date.today()
+                current_year = today.year
+                expiration_date = st.date_input(
+                    "Data de expiração",
+                    value=date(current_year, 12, 31),
+                    key="itau_consent_exp_date",
+                )
+                expiration_time = st.time_input(
+                    "Horário de expiração",
+                    value=time(23, 59, 59),
+                    key="itau_consent_exp_time",
+                )
+
+                col_range_from, col_range_to = st.columns(2)
+                with col_range_from:
+                    from_date = st.date_input(
+                        "Transações a partir de",
+                        value=date(current_year, 1, 1),
+                        key="itau_consent_from_date",
+                    )
+                    from_time = st.time_input(
+                        "Horário inicial",
+                        value=time(0, 0, 0),
+                        key="itau_consent_from_time",
+                    )
+                with col_range_to:
+                    to_date = st.date_input(
+                        "Transações até",
+                        value=today,
+                        key="itau_consent_to_date",
+                    )
+                    to_time = st.time_input(
+                        "Horário final",
+                        value=time(23, 59, 59),
+                        key="itau_consent_to_time",
+                    )
+
+                def _isoformat_or_none(d_value, t_value) -> Optional[str]:
+                    if not isinstance(d_value, date):
+                        return None
+                    if not isinstance(t_value, time):
+                        t_value = time(0, 0, 0)
+                    combined = datetime.combine(d_value, t_value)
+                    return combined.replace(microsecond=0).isoformat() + "Z"
+
+                if st.button("Gerar consentimento Itaú", key="btn_itau_generate_consent"):
+                    if not permissions_selected:
+                        st.error("Selecione pelo menos um escopo para o consentimento.")
+                    else:
+                        client = _build_openfinance_client()
+                        if client:
+                            try:
+                                consent_response = client.create_consent(
+                                    permissions=permissions_selected,
+                                    expiration_datetime=_isoformat_or_none(
+                                        expiration_date, expiration_time
+                                    ),
+                                    transaction_from_datetime=_isoformat_or_none(
+                                        from_date, from_time
+                                    ),
+                                    transaction_to_datetime=_isoformat_or_none(
+                                        to_date, to_time
+                                    ),
+                                )
+                            except OpenFinanceError as exc:
+                                st.error(f"Falha ao criar consentimento: {exc}")
+                            else:
+                                data_block = consent_response.get("data") or {}
+                                consent_id_created = (
+                                    data_block.get("consentId")
+                                    or consent_response.get("consentId")
+                                )
+                                if consent_id_created:
+                                    manual_state["consent_id"] = consent_id_created
+                                st.session_state["itau_last_consent_response"] = consent_response
+                                st.success(
+                                    "Consentimento criado! Avance para o fluxo OAuth no aplicativo do Itaú."
+                                )
+                                st.info(
+                                    "Após a criação, redirecione o titular para autenticação com response_type=code, "
+                                    "scope=openid accounts e o consent_id informado, conforme documentado."
+                                )
+
+                consent_preview = st.session_state.get("itau_last_consent_response")
+                if consent_preview:
+                    st.json(consent_preview)
+
             def _merge_openfinance_config():
                 payload = {
                     "client_id": manual_state.get("client_id") or secrets_of.get("client_id", ""),
@@ -1190,6 +1306,8 @@ elif menu == "Importação":
                     or secrets_of.get("accounts_endpoint"),
                     "transactions_endpoint": manual_state.get("transactions_endpoint")
                     or secrets_of.get("transactions_endpoint"),
+                    "consents_endpoint": manual_state.get("consents_endpoint")
+                    or secrets_of.get("consents_endpoint"),
                     "additional_headers": additional_headers,
                 }
                 payload = {k: v for k, v in payload.items() if v not in ("", None)}
