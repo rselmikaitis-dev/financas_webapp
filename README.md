@@ -44,11 +44,12 @@ pip install -r requirements.txt
 
    > Os arquivos de certificado/ chave devem estar presentes no contêiner (ex.: pasta `certs/`).
 
-3. Acesse o menu **Importação → Open Finance Itaú** no app para:
+3. Antes de importar, siga o [guia de consentimento](docs/itau_open_finance_consent.md) para criar/autorizar o `consentId` necessário e evitar respostas 403 da API.
+4. Acesse o menu **Importação → Open Finance Itaú** no app para:
    - listar contas elegíveis (`Atualizar contas Itaú`);
    - selecionar a conta (`accountId`) e o período desejado;
    - importar as transações diretamente para a base local, utilizando o mesmo fluxo de classificação/edição do upload de arquivos.
 
-4. Caso deseje testar manualmente, é possível informar `client_id`, `client_secret`, `consent_id`, token estático, endpoints, cabeçalhos e parâmetros extras diretamente na interface — os valores digitados ficam apenas na sessão atual.
+5. Caso deseje testar manualmente, é possível informar `client_id`, `client_secret`, `consent_id`, token estático, endpoints, cabeçalhos e parâmetros extras diretamente na interface — os valores digitados ficam apenas na sessão atual.
 
-5. Para cartões de crédito cadastrados na aba **Configurações → Contas** com dia de vencimento, continue selecionando o mês/ano de referência antes de importar para que as parcelas futuras sejam geradas corretamente.
+6. Para cartões de crédito cadastrados na aba **Configurações → Contas** com dia de vencimento, continue selecionando o mês/ano de referência antes de importar para que as parcelas futuras sejam geradas corretamente.
