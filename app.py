@@ -1,3 +1,4 @@
+import json
 import re
 import sqlite3
 from collections import defaultdict
@@ -9,6 +10,13 @@ import streamlit as st
 from datetime import date, datetime, timedelta
 from streamlit_option_menu import option_menu
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
+
+from openfinance import (
+    ItauOpenFinanceClient,
+    ItauOpenFinanceConfig,
+    OpenFinanceError,
+    transactions_to_dataframe,
+)
 
 st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="wide")
 
@@ -923,6 +931,7 @@ elif menu == "Lançamentos":
             st.session_state["grid_refresh"] += 1
             st.rerun()
             
+
 elif menu == "Importação":
     st.header("Importação de Lançamentos")
 
@@ -933,7 +942,6 @@ elif menu == "Importação":
     else:
         conta_sel = st.selectbox("Conta destino", contas_db)
 
-        # ----- MAPA CATEGORIA/SUB -----
         cursor.execute(
             """
                 SELECT s.id, s.nome, c.nome
@@ -946,9 +954,6 @@ elif menu == "Importação":
         for sid, s_nome, c_nome in cursor.fetchall():
             cat_sub_map[f"{c_nome} → {s_nome}"] = sid
 
-        # Upload de arquivo
-        arquivo = st.file_uploader("Selecione o arquivo (CSV, XLSX ou XLS)", type=["csv", "xlsx", "xls"])
-
         def _read_uploaded(file):
             name = file.name.lower()
             if name.endswith(".csv"):
@@ -959,7 +964,6 @@ elif menu == "Importação":
                 return pd.read_excel(file, engine="xlrd", dtype=str)
             raise RuntimeError("Formato não suportado.")
 
-        # Se for cartão de crédito → pedir mês/ano
         mes_ref_cc = ano_ref_cc = None
         dia_venc_cc = None
         if conta_sel:
@@ -977,218 +981,483 @@ elif menu == "Importação":
         if conta_sel and eh_cartao:
             mes_ref_cc, ano_ref_cc = seletor_mes_ano("Referente à fatura", date.today())
 
-        if arquivo is not None:
-            try:
-                df = _read_uploaded(arquivo)
-                df.columns = [c.strip().lower().replace("\ufeff", "") for c in df.columns]
+        df_to_process = None
+        origem_label = ""
 
-                mapa_colunas = {
-                    "data": ["data","data lançamento","data lancamento","dt","lançamento","data mov","data movimento"],
-                    "descrição": ["descrição","descricao","historico","histórico","detalhe","descricao/historico","lançamento"],
-                    "valor": ["valor","valor (r$)","valor r$","vlr","amount","valorlancamento","valor lancamento"]
+        tab_arquivo, tab_openfinance = st.tabs(["Arquivo", "Open Finance Itaú"])
+
+        with tab_arquivo:
+            st.subheader("Upload de arquivo")
+            arquivo = st.file_uploader(
+                "Selecione o arquivo (CSV, XLSX ou XLS)",
+                type=["csv", "xlsx", "xls"],
+                key="upload_lancamentos"
+            )
+            if arquivo is not None:
+                try:
+                    df = _read_uploaded(arquivo)
+                    df.columns = [c.strip().lower().replace("\ufeff", "") for c in df.columns]
+
+                    mapa_colunas = {
+                        "data": ["data","data lançamento","data lancamento","dt","lançamento","data mov","data movimento"],
+                        "descrição": ["descrição","descricao","historico","histórico","detalhe","descricao/historico","lançamento"],
+                        "valor": ["valor","valor (r$)","valor r$","vlr","amount","valorlancamento","valor lancamento"]
+                    }
+                    col_map = {}
+                    for alvo, poss in mapa_colunas.items():
+                        for p in poss:
+                            if p in df.columns:
+                                col_map[alvo] = p
+                                break
+
+                    if "data" not in col_map or "valor" not in col_map:
+                        st.error(f"Arquivo inválido. Colunas lidas: {list(df.columns)}")
+                    else:
+                        if "descrição" not in col_map:
+                            df["descrição"] = ""
+                            col_map["descrição"] = "descrição"
+
+                        df = df.rename(columns={
+                            col_map["data"]: "Data",
+                            col_map["descrição"]: "Descrição",
+                            col_map["valor"]: "Valor"
+                        })
+
+                        df_to_process = df
+                        origem_label = f"Arquivo • {arquivo.name}"
+                        st.session_state["import_source_flag"] = "arquivo"
+                except Exception as e:
+                    st.error(f"Erro ao processar arquivo: {e}")
+
+        with tab_openfinance:
+            st.subheader("Integração Open Finance Itaú")
+
+            secrets_of = st.secrets.get("itau_openfinance", {})
+            manual_state = st.session_state.setdefault("itau_openfinance_manual", {})
+
+            if secrets_of:
+                st.caption(
+                    "Credenciais detectadas nos Secrets. Preencha os campos abaixo apenas se quiser sobrescrever temporariamente."
+                )
+
+            client_id_manual = st.text_input(
+                "Client ID (opcional – sobrescreve secrets)",
+                value=manual_state.get("client_id", ""),
+            )
+            manual_state["client_id"] = client_id_manual.strip()
+
+            client_secret_manual = st.text_input(
+                "Client Secret (opcional – sobrescreve secrets)",
+                value=manual_state.get("client_secret", ""),
+                type="password",
+            )
+            manual_state["client_secret"] = client_secret_manual.strip()
+
+            consent_id_manual = st.text_input(
+                "Consent ID (opcional)",
+                value=manual_state.get("consent_id", ""),
+            )
+            manual_state["consent_id"] = consent_id_manual.strip()
+
+            col_urls = st.columns(2)
+            with col_urls[0]:
+                base_url_manual = st.text_input(
+                    "Base URL (opcional)",
+                    value=manual_state.get("base_url", ""),
+                    help="Ex.: https://api.itau.com.br/open-banking",
+                )
+                manual_state["base_url"] = base_url_manual.strip()
+            with col_urls[1]:
+                token_url_manual = st.text_input(
+                    "Token URL (opcional)",
+                    value=manual_state.get("token_url", ""),
+                    help="Ex.: https://sts.itau.com.br/api/oauth/token",
+                )
+                manual_state["token_url"] = token_url_manual.strip()
+
+            col_cert = st.columns(2)
+            with col_cert[0]:
+                cert_path_manual = st.text_input(
+                    "Certificado mTLS (caminho opcional)",
+                    value=manual_state.get("certificate", ""),
+                )
+                manual_state["certificate"] = cert_path_manual.strip()
+            with col_cert[1]:
+                cert_key_manual = st.text_input(
+                    "Chave mTLS (caminho opcional)",
+                    value=manual_state.get("certificate_key", ""),
+                )
+                manual_state["certificate_key"] = cert_key_manual.strip()
+
+            scope_manual = st.text_input(
+                "Escopo OAuth (opcional)",
+                value=manual_state.get("scope", ""),
+                help="Ex.: openid accounts transactions",
+            )
+            manual_state["scope"] = scope_manual.strip()
+
+            def _load_headers(value):
+                if not value:
+                    return {}
+                if isinstance(value, dict):
+                    return value
+                try:
+                    return json.loads(value)
+                except json.JSONDecodeError:
+                    st.warning("additional_headers nos Secrets com JSON inválido – ignorado.")
+                    return {}
+
+            additional_headers = {}
+            additional_headers.update(_load_headers(secrets_of.get("additional_headers")))
+
+            manual_headers_text = st.text_area(
+                "Cabeçalhos adicionais (JSON opcional)",
+                value=manual_state.get("additional_headers", ""),
+                height=100,
+            )
+            manual_state["additional_headers"] = manual_headers_text
+            headers_valid = True
+            if manual_headers_text.strip():
+                try:
+                    additional_headers.update(json.loads(manual_headers_text))
+                except json.JSONDecodeError:
+                    st.error("Cabeçalhos adicionais inválidos (JSON).")
+                    headers_valid = False
+
+            def _merge_openfinance_config():
+                payload = {
+                    "client_id": manual_state.get("client_id") or secrets_of.get("client_id", ""),
+                    "client_secret": manual_state.get("client_secret") or secrets_of.get("client_secret", ""),
+                    "consent_id": manual_state.get("consent_id") or secrets_of.get("consent_id"),
+                    "base_url": manual_state.get("base_url") or secrets_of.get("base_url"),
+                    "token_url": manual_state.get("token_url") or secrets_of.get("token_url"),
+                    "certificate": manual_state.get("certificate") or secrets_of.get("certificate"),
+                    "certificate_key": manual_state.get("certificate_key") or secrets_of.get("certificate_key"),
+                    "scope": manual_state.get("scope") or secrets_of.get("scope"),
+                    "additional_headers": additional_headers,
                 }
-                col_map = {}
-                for alvo, poss in mapa_colunas.items():
-                    for p in poss:
-                        if p in df.columns:
-                            col_map[alvo] = p
-                            break
+                payload = {k: v for k, v in payload.items() if v not in ("", None)}
+                return payload
 
-                if "data" not in col_map or "valor" not in col_map:
-                    st.error(f"Arquivo inválido. Colunas lidas: {list(df.columns)}")
-                else:
-                    if "descrição" not in col_map:
-                        df["descrição"] = ""
-                        col_map["descrição"] = "descrição"
+            def _build_openfinance_client():
+                if not headers_valid:
+                    return None
+                payload = _merge_openfinance_config()
+                missing = [field for field in ("client_id", "client_secret") if not payload.get(field)]
+                if missing:
+                    st.error("Informe client_id e client_secret (via Secrets ou campos acima).")
+                    return None
+                try:
+                    config = ItauOpenFinanceConfig.from_dict(payload)
+                except TypeError as exc:
+                    st.error(f"Configuração inválida: {exc}")
+                    return None
 
-                    df = df.rename(columns={
-                        col_map["data"]: "Data",
-                        col_map["descrição"]: "Descrição",
-                        col_map["valor"]: "Valor"
-                    })
+                for path_check in (config.certificate, config.certificate_key):
+                    if path_check and not os.path.exists(path_check):
+                        st.warning(f"Arquivo não encontrado: {path_check}")
+                return ItauOpenFinanceClient(config)
 
-                    # Remove linhas de saldo
-                    df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
-
-                    # Conversões seguras
-                    df["Data"] = df["Data"].apply(parse_date)
-                    df["Valor"] = df["Valor"].apply(parse_money)
-                    df = df.dropna(subset=["Data", "Valor"])  # 🔹 remove linhas sem data/valor
-
-                    # ---------- PRÉ-VISUALIZAÇÃO ----------
-                    st.subheader("Pré-visualização")
-
-                    df_preview = df.copy()
-                    df_preview["Conta destino"] = conta_sel
-
-                    def _safe_date_iso(valor):
-                        if isinstance(valor, date):
-                            return valor.strftime("%Y-%m-%d")
-                        if isinstance(valor, datetime):
-                            return valor.date().strftime("%Y-%m-%d")
+            col_btn_accounts, col_btn_clear_accounts, col_btn_clear_preview = st.columns(3)
+            with col_btn_accounts:
+                if st.button("Atualizar contas Itaú", key="btn_itau_list_accounts"):
+                    client = _build_openfinance_client()
+                    if client:
                         try:
-                            dt = parse_date(valor)
-                            if isinstance(dt, date):
-                                return dt.strftime("%Y-%m-%d")
-                        except Exception:
-                            pass
-                        return ""
-
-                    df_preview["data_original_iso"] = df_preview["Data"].apply(_safe_date_iso)
-                    df_preview["Data original"] = df_preview["data_original_iso"].apply(
-                        lambda s: datetime.strptime(s, "%Y-%m-%d").strftime("%d/%m/%Y") if s else ""
-                    )
-
-                    # Se for cartão → ajusta data
-                    if eh_cartao and mes_ref_cc and ano_ref_cc:
-                        from calendar import monthrange
-                        dia_final = min(dia_venc_cc or 1, monthrange(ano_ref_cc, mes_ref_cc)[1])
-                        dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
-                        df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
-                    else:
-                        df_preview["Data efetiva"] = pd.to_datetime(df_preview["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-
-                    total_registros = len(df_preview)
-                    soma_valores = df_preview["Valor"].fillna(0).astype(float).sum()
-                    valor_formatado = f"R$ {soma_valores:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-                    st.markdown(
-                        f"**{total_registros}** registros · Soma dos valores: **{valor_formatado}**"
-                    )
-
-                    # 🔹 histórico de classificações já feitas
-                    hist = _build_hist_similaridade(conn, conta_sel)
-
-                    # Detecta parcelas automáticas no texto
-                    def detectar_parcela(desc: str):
-                        padroes = [
-                            r"(\d+)\s*/\s*(\d+)",            # ex: "3/10"
-                            r"parcela\s*(\d+)\s*de\s*(\d+)"  # ex: "Parcela 5 de 12"
-                        ]
-                        for p in padroes:
-                            m = re.search(p, desc, re.IGNORECASE)
-                            if m:
-                                return int(m.group(1)), int(m.group(2))
-                        return None, None
-                    
-                    parcelas_atuais, parcelas_totais = [], []
-                    for _, r in df_preview.iterrows():
-                        p_atual, p_total = detectar_parcela(str(r["Descrição"]))
-                        parcelas_atuais.append(p_atual if p_atual else 1)
-                        parcelas_totais.append(p_total if p_total else 1)
-
-                    if eh_cartao:
-                        df_preview["Parcela atual"] = parcelas_atuais
-                        df_preview["Parcelas totais"] = parcelas_totais
-                        df_preview["Parcelado?"] = [p > 1 for p in parcelas_totais]
-                    else:
-                        df_preview["Parcela atual"] = 1
-                        df_preview["Parcelas totais"] = 1
-                        df_preview["Parcelado?"] = False
-                    
-                    # 🔹 tenta sugerir categoria/subcategoria
-                    sugestoes, sub_ids = [], []
-                    for _, r in df_preview.iterrows():
-                        desc = str(r["Descrição"])
-                        val = r["Valor"]
-                        if val is None:
-                            sugestoes.append("Nenhuma")
-                            sub_ids.append(None)
-                            continue
-                        sub_id, label, score = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
-                        sugestoes.append(label if sub_id else "Nenhuma")
-                        sub_ids.append(sub_id)
-                    
-                    df_preview["Sugestão Categoria/Sub"] = sugestoes
-                    df_preview["sub_id_sugerido"] = sub_ids
-                    
-                    # 🔹 checa duplicidade usando descrição normalizada
-                    # 🔹 detecção de duplicados considerando ocorrências repetidas
-                    def _safe_int(val, default=1):
-                        try:
-                            if pd.isna(val):
-                                return default
-                        except TypeError:
-                            pass
-                        try:
-                            return int(float(val))
-                        except (TypeError, ValueError):
-                            return default
-
-                    ocorrencias = defaultdict(int)
-                    chaves_preview = []
-                    seq_preview = []
-                    for _, r in df_preview.iterrows():
-                        desc = str(r["Descrição"]).strip()
-                        val = r["Valor"]
-
-                        if val is None:
-                            chaves_preview.append(None)
-                            seq_preview.append(None)
-                            continue
-
-                        try:
-                            val_f = float(val)
-                        except (TypeError, ValueError):
-                            chaves_preview.append(None)
-                            seq_preview.append(None)
-                            continue
-
-                        if eh_cartao and mes_ref_cc and ano_ref_cc:
-                            if val_f > 0:
-                                val_cmp = -abs(val_f)
-                            else:
-                                val_cmp = abs(val_f)
-                            try:
-                                data_cmp = datetime.strptime(r["Data efetiva"], "%d/%m/%Y").date()
-                            except Exception:
-                                chaves_preview.append(None)
-                                seq_preview.append(None)
-                                continue
+                            accounts = client.list_accounts()
+                        except OpenFinanceError as exc:
+                            st.error(f"Erro ao listar contas: {exc}")
                         else:
-                            val_cmp = val_f
-                            data_cmp = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
+                            st.session_state["itau_openfinance_accounts"] = accounts
+                            st.success(f"{len(accounts)} conta(s) carregadas.")
+            with col_btn_clear_accounts:
+                if st.button("Limpar contas carregadas", key="btn_itau_clear_accounts"):
+                    st.session_state.pop("itau_openfinance_accounts", None)
+                    st.info("Lista de contas limpa.")
+            with col_btn_clear_preview:
+                if st.button("Limpar pré-visualização Itaú", key="btn_itau_clear_preview"):
+                    st.session_state.pop("itau_last_df", None)
+                    st.session_state.pop("itau_last_label", None)
+                    st.session_state["import_source_flag"] = None
+                    st.info("Pré-visualização do Itaú limpa.")
 
-                        if isinstance(data_cmp, datetime):
-                            data_cmp = data_cmp.date()
+            accounts_loaded = st.session_state.get("itau_openfinance_accounts") or []
+            account_options = {}
+            for acc in accounts_loaded:
+                acc_id = str(acc.get("accountId") or acc.get("id") or "").strip()
+                if not acc_id:
+                    continue
+                label_parts = [acc.get("name"), acc.get("productType"), acc.get("brandName")]
+                label = " · ".join([p for p in label_parts if p])
+                account_options[acc_id] = label or acc_id
 
-                        if not isinstance(data_cmp, date):
+            selected_account = None
+            if account_options:
+                selected_account = st.selectbox(
+                    "Conta Itaú (accountId)",
+                    list(account_options.keys()),
+                    format_func=lambda x: f"{account_options[x]} ({x})" if account_options[x] and account_options[x] != x else x,
+                    key="itau_account_select",
+                )
+
+            default_account_value = manual_state.get("account_id") or (selected_account or "")
+            manual_account = st.text_input(
+                "accountId (obrigatório quando não listado)",
+                value=default_account_value,
+                help="Cole o accountId retornado no consentimento do Itaú.",
+            )
+            manual_state["account_id"] = manual_account.strip()
+            account_id = manual_account.strip() or (selected_account or "")
+
+            default_start = manual_state.get("start_date") or (date.today() - timedelta(days=30))
+            default_end = manual_state.get("end_date") or date.today()
+            col_data_ini, col_data_fim = st.columns(2)
+            with col_data_ini:
+                data_inicio = st.date_input("Data inicial", value=default_start, key="itau_data_inicio")
+            with col_data_fim:
+                data_fim = st.date_input("Data final", value=default_end, key="itau_data_fim")
+            manual_state["start_date"] = data_inicio
+            manual_state["end_date"] = data_fim
+
+            if data_inicio > data_fim:
+                st.error("Data inicial não pode ser posterior à data final.")
+
+            if st.button("⬇️ Buscar transações", key="btn_itau_fetch"):
+                if not headers_valid:
+                    st.error("Corrija o JSON dos cabeçalhos adicionais antes de continuar.")
+                elif not account_id:
+                    st.error("Informe o accountId da conta consentida.")
+                else:
+                    client = _build_openfinance_client()
+                    if client:
+                        try:
+                            transactions = client.fetch_transactions(
+                                account_id,
+                                start_date=data_inicio.isoformat(),
+                                end_date=data_fim.isoformat(),
+                            )
+                        except OpenFinanceError as exc:
+                            st.error(f"Erro ao buscar transações: {exc}")
+                        else:
+                            if not transactions:
+                                st.info("Nenhuma transação retornada para o período selecionado.")
+                            else:
+                                df_api = transactions_to_dataframe(transactions)
+                                if df_api.empty:
+                                    st.info("Nenhum lançamento com valor válido foi encontrado.")
+                                else:
+                                    label = account_options.get(account_id)
+                                    origem = f"Itaú Open Finance – {label or account_id}"
+                                    st.session_state["itau_last_df"] = df_api
+                                    st.session_state["itau_last_label"] = origem
+                                    st.session_state["import_source_flag"] = "openfinance"
+                                    df_to_process = df_api
+                                    origem_label = origem
+                                    st.success(f"{len(df_api)} transações carregadas do Itaú.")
+
+        if df_to_process is None and st.session_state.get("import_source_flag") == "openfinance":
+            df_salvo = st.session_state.get("itau_last_df")
+            if df_salvo is not None:
+                df_to_process = df_salvo
+                origem_label = st.session_state.get("itau_last_label", "Itaú Open Finance")
+
+        def _run_import_pipeline(df_base: pd.DataFrame, origem: str):
+            try:
+                df = df_base.copy()
+                if not {"Data", "Descrição", "Valor"}.issubset(df.columns):
+                    st.error("DataFrame precisa conter as colunas 'Data', 'Descrição' e 'Valor'.")
+                    return
+
+                df["Descrição"] = df["Descrição"].fillna("")
+                df = df[~df["Descrição"].astype(str).str.upper().str.startswith("SALDO")]
+
+                df["Data"] = df["Data"].apply(parse_date)
+                df["Valor"] = df["Valor"].apply(parse_money)
+                df = df.dropna(subset=["Data", "Valor"])
+
+                st.subheader("Pré-visualização")
+                if origem:
+                    st.caption(f"Origem: {origem}")
+
+                df_preview = df.copy()
+                df_preview["Conta destino"] = conta_sel
+
+                def _safe_date_iso(valor):
+                    if isinstance(valor, date):
+                        return valor.strftime("%Y-%m-%d")
+                    if isinstance(valor, datetime):
+                        return valor.date().strftime("%Y-%m-%d")
+                    try:
+                        dt = parse_date(valor)
+                        if isinstance(dt, date):
+                            return dt.strftime("%Y-%m-%d")
+                    except Exception:
+                        pass
+                    return ""
+
+                if "data_original_iso" in df_preview.columns:
+                    df_preview["data_original_iso"] = df_preview["data_original_iso"].apply(
+                        lambda v: v if isinstance(v, str) and v else _safe_date_iso(v)
+                    )
+                else:
+                    df_preview["data_original_iso"] = df_preview["Data"].apply(_safe_date_iso)
+
+                def _format_data_original(valor: str) -> str:
+                    if not valor:
+                        return ""
+                    try:
+                        return datetime.strptime(valor, "%Y-%m-%d").strftime("%d/%m/%Y")
+                    except Exception:
+                        return str(valor)
+
+                df_preview["Data original"] = df_preview["data_original_iso"].apply(_format_data_original)
+
+                if eh_cartao and mes_ref_cc and ano_ref_cc:
+                    from calendar import monthrange
+
+                    dia_final = min(dia_venc_cc or 1, monthrange(ano_ref_cc, mes_ref_cc)[1])
+                    dt_eff = date(ano_ref_cc, mes_ref_cc, dia_final)
+                    df_preview["Data efetiva"] = dt_eff.strftime("%d/%m/%Y")
+                else:
+                    df_preview["Data efetiva"] = pd.to_datetime(
+                        df_preview["Data"], errors="coerce"
+                    ).dt.strftime("%d/%m/%Y")
+
+                total_registros = len(df_preview)
+                soma_valores = df_preview["Valor"].fillna(0).astype(float).sum()
+                valor_formatado = f"R$ {soma_valores:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+                st.markdown(
+                    f"**{total_registros}** registros · Soma dos valores: **{valor_formatado}**"
+                )
+
+                hist = _build_hist_similaridade(conn, conta_sel)
+
+                def detectar_parcela(desc: str):
+                    padroes = [
+                        r"(\d+)\s*/\s*(\d+)",
+                        r"parcela\s*(\d+)\s*de\s*(\d+)"
+                    ]
+                    for p in padroes:
+                        m = re.search(p, desc, re.IGNORECASE)
+                        if m:
+                            return int(m.group(1)), int(m.group(2))
+                    return None, None
+
+                parcelas_atuais, parcelas_totais = [], []
+                for _, r in df_preview.iterrows():
+                    p_atual, p_total = detectar_parcela(str(r["Descrição"]))
+                    parcelas_atuais.append(p_atual if p_atual else 1)
+                    parcelas_totais.append(p_total if p_total else 1)
+
+                if eh_cartao:
+                    df_preview["Parcela atual"] = parcelas_atuais
+                    df_preview["Parcelas totais"] = parcelas_totais
+                    df_preview["Parcelado?"] = [p > 1 for p in parcelas_totais]
+                else:
+                    df_preview["Parcela atual"] = 1
+                    df_preview["Parcelas totais"] = 1
+                    df_preview["Parcelado?"] = False
+
+                sugestoes, sub_ids = [], []
+                for _, r in df_preview.iterrows():
+                    desc = str(r["Descrição"])
+                    val = r["Valor"]
+                    if val is None:
+                        sugestoes.append("Nenhuma")
+                        sub_ids.append(None)
+                        continue
+                    sub_id, label, score = sugerir_subcategoria(desc, hist) if hist else (None, None, 0)
+                    sugestoes.append(label if sub_id else "Nenhuma")
+                    sub_ids.append(sub_id)
+
+                df_preview["Sugestão Categoria/Sub"] = sugestoes
+                df_preview["sub_id_sugerido"] = sub_ids
+
+                def _safe_int(val, default=1):
+                    try:
+                        if pd.isna(val):
+                            return default
+                    except TypeError:
+                        pass
+                    try:
+                        return int(float(val))
+                    except (TypeError, ValueError):
+                        return default
+
+                ocorrencias = defaultdict(int)
+                chaves_preview = []
+                seq_preview = []
+                for _, r in df_preview.iterrows():
+                    desc = str(r["Descrição"]).strip()
+                    val = r["Valor"]
+
+                    if val is None:
+                        chaves_preview.append(None)
+                        seq_preview.append(None)
+                        continue
+
+                    try:
+                        val_f = float(val)
+                    except (TypeError, ValueError):
+                        chaves_preview.append(None)
+                        seq_preview.append(None)
+                        continue
+
+                    if eh_cartao and mes_ref_cc and ano_ref_cc:
+                        if val_f > 0:
+                            val_cmp = -abs(val_f)
+                        else:
+                            val_cmp = abs(val_f)
+                        try:
+                            data_cmp = datetime.strptime(r["Data efetiva"], "%d/%m/%Y").date()
+                        except Exception:
                             chaves_preview.append(None)
                             seq_preview.append(None)
                             continue
+                    else:
+                        val_cmp = val_f
+                        data_cmp = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
 
-                        data_original_iso = str(r.get("data_original_iso") or "").strip()
-                        if not data_original_iso:
-                            data_original_iso = _safe_date_iso(r.get("Data"))
+                    if isinstance(data_cmp, datetime):
+                        data_cmp = data_cmp.date()
 
-                        p_atual = _safe_int(r.get("Parcela atual", 1))
-                        p_total = _safe_int(r.get("Parcelas totais", 1))
+                    if not isinstance(data_cmp, date):
+                        chaves_preview.append(None)
+                        seq_preview.append(None)
+                        continue
 
-                        chave_base = (
-                            conta_sel,
-                            data_cmp.strftime("%Y-%m-%d"),
-                            round(val_cmp, 2),
-                            _normalize_desc(desc),
-                            p_atual,
-                            p_total,
-                            data_original_iso,
-                        )
+                    data_original_iso = str(r.get("data_original_iso") or "").strip()
+                    if not data_original_iso:
+                        data_original_iso = _safe_date_iso(r.get("Data"))
 
-                        ocorrencias[chave_base] += 1
-                        seq_atual = ocorrencias[chave_base]
+                    p_atual = _safe_int(r.get("Parcela atual", 1))
+                    p_total = _safe_int(r.get("Parcelas totais", 1))
 
-                        chave = chave_base + (seq_atual,)
-                        chaves_preview.append(chave)
-                        seq_preview.append(seq_atual)
+                    chave_base = (
+                        conta_sel,
+                        data_cmp.strftime("%Y-%m-%d"),
+                        round(val_cmp, 2),
+                        _normalize_desc(desc),
+                        p_atual,
+                        p_total,
+                        data_original_iso,
+                    )
 
-                    df_preview["seq_import"] = seq_preview
+                    ocorrencias[chave_base] += 1
+                    seq_atual = ocorrencias[chave_base]
 
-                    # Conta quantos lançamentos já existem para cada chave
-                    existentes = {}
-                    chaves_validas = {ch for ch in chaves_preview if ch is not None}
-                    for chave in chaves_validas:
-                        cursor.execute(
-                            """
+                    chave = chave_base + (seq_atual,)
+                    chaves_preview.append(chave)
+                    seq_preview.append(seq_atual)
+
+                df_preview["seq_import"] = seq_preview
+
+                existentes = {}
+                chaves_validas = {ch for ch in chaves_preview if ch is not None}
+                for chave in chaves_validas:
+                    cursor.execute(
+                        """
                                 SELECT COUNT(*) FROM transactions
                                  WHERE account=? AND date=? AND ROUND(value,2)=ROUND(?,2)
                                    AND COALESCE(desc_norm, '') = COALESCE(?, '')
@@ -1196,155 +1465,137 @@ elif menu == "Importação":
                                    AND COALESCE(parcelas_totais, 1) = ?
                                    AND COALESCE(orig_date, '') = COALESCE(?, '')
                                    AND COALESCE(import_seq, 1) = ?
-                            """,
-                            chave,
-                        )
-                        count = cursor.fetchone()
-                        existentes[chave] = count[0] if count and count[0] else 0
-
-                    vistos = defaultdict(int)
-                    duplicados = []
-                    for chave in chaves_preview:
-                        if chave is None:
-                            duplicados.append(False)
-                            continue
-                        vistos[chave] += 1
-                        duplicados.append(vistos[chave] <= existentes.get(chave, 0))
-
-                    df_preview["Já existe?"] = duplicados
-                    
-                    # Exibe preview editável
-                    gb = GridOptionsBuilder.from_dataframe(df_preview)
-                    gb.configure_default_column(editable=True)
-                    gb.configure_column(
-                        "Parcelado?",
-                        editable=True,
-                        cellEditor="agSelectCellEditor",
-                        cellEditorParams={"values": ["True", "False"]},
+                        """,
+                        chave,
                     )
-                    gb.configure_column(
-                        "Sugestão Categoria/Sub",
-                        editable=True,
-                        cellEditor="agSelectCellEditor",
-                        cellEditorParams={"values": list(cat_sub_map.keys())},
-                    )
-                    gb.configure_column("sub_id_sugerido", hide=True)
-                    gb.configure_column("data_original_iso", hide=True)
-                    gb.configure_column("seq_import", hide=True)
-                    gb.configure_column("Data original", editable=False)
-                    grid = AgGrid(
-                        df_preview,
-                        gridOptions=gb.build(),
-                        update_mode=GridUpdateMode.VALUE_CHANGED,
-                        data_return_mode="AS_INPUT",
-                        fit_columns_on_grid_load=True,
-                        theme="balham",
-                        height=400
-                    )
-                    df_preview_editado = pd.DataFrame(grid["data"])
-                    if "seq_import" not in df_preview_editado.columns and "seq_import" in df_preview.columns:
-                        df_preview_editado["seq_import"] = df_preview["seq_import"].values
-                    if "data_original_iso" not in df_preview_editado.columns and "data_original_iso" in df_preview.columns:
-                        df_preview_editado["data_original_iso"] = df_preview["data_original_iso"].values
-                    if not df_preview_editado.empty and "Sugestão Categoria/Sub" in df_preview_editado.columns:
-                        df_preview_editado["sub_id_sugerido"] = df_preview_editado[
-                            "Sugestão Categoria/Sub"
-                        ].map(lambda val: cat_sub_map.get(val, None))
+                    count = cursor.fetchone()
+                    existentes[chave] = count[0] if count and count[0] else 0
 
-                    # ---------- IMPORTAR ----------
-                    st.session_state.setdefault("import_log", [])
+                vistos = defaultdict(int)
+                duplicados = []
+                for chave in chaves_preview:
+                    if chave is None:
+                        duplicados.append(False)
+                        continue
+                    vistos[chave] += 1
+                    duplicados.append(vistos[chave] <= existentes.get(chave, 0))
 
-                    if st.button("Importar lançamentos"):
-                        from calendar import monthrange
-                        from dateutil.relativedelta import relativedelta
+                df_preview["Já existe?"] = duplicados
 
+                gb = GridOptionsBuilder.from_dataframe(df_preview)
+                gb.configure_default_column(editable=True)
+                gb.configure_column(
+                    "Parcelado?",
+                    editable=True,
+                    cellEditor="agSelectCellEditor",
+                    cellEditorParams={"values": [True, False]},
+                )
+                gb.configure_column(
+                    "Valor",
+                    type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
+                    precision=2,
+                )
+                gb.configure_column("Conta destino", editable=False)
+                gb.configure_column("Data efetiva", editable=False)
+                gb.configure_column("Data original", editable=False)
+                gb.configure_column("Já existe?", editable=False)
+                gb.configure_column("Sugestão Categoria/Sub", editable=False)
+                for hidden_col in ("data_original_iso", "seq_import", "Transação ID"):
+                    if hidden_col in df_preview.columns:
+                        gb.configure_column(hidden_col, hide=True)
+
+                gb.configure_grid_options(domLayout="normal")
+
+                response = AgGrid(
+                    df_preview,
+                    gridOptions=gb.build(),
+                    fit_columns_on_grid_load=True,
+                    update_mode=GridUpdateMode.VALUE_CHANGED,
+                    enable_enterprise_modules=False,
+                    allow_unsafe_jscode=False,
+                )
+
+                df_preview_editado = pd.DataFrame(response["data"]) if response else df_preview
+                if "seq_import" not in df_preview_editado.columns and "seq_import" in df_preview.columns:
+                    df_preview_editado["seq_import"] = df_preview["seq_import"].values
+                if "data_original_iso" not in df_preview_editado.columns and "data_original_iso" in df_preview.columns:
+                    df_preview_editado["data_original_iso"] = df_preview["data_original_iso"].values
+                if "Transação ID" not in df_preview_editado.columns and "Transação ID" in df_preview.columns:
+                    df_preview_editado["Transação ID"] = df_preview["Transação ID"].values
+
+                col_actions = st.columns([2, 1])
+                with col_actions[0]:
+                    cat_sel = st.selectbox("Categoria/Sub para aplicar", list(cat_sub_map.keys()))
+                with col_actions[1]:
+                    if st.button("Aplicar categoria selecionada", key="btn_apply_cat"):
+                        sub_id = cat_sub_map.get(cat_sel)
+                        if sub_id is not None:
+                            df_preview_editado["sub_id_sugerido"] = sub_id
+                            df_preview_editado["Sugestão Categoria/Sub"] = cat_sel
+
+                if st.button("Importar lançamentos", type="primary", key="btn_importar_lanc"):
+                    try:
+                        df_final = df_preview_editado.copy()
+                        df_final["Valor"] = df_final["Valor"].apply(parse_money)
+                        df_final = df_final.dropna(subset=["Valor", "Data"])
+
+                        log_entries = st.session_state.setdefault("import_log", [])
                         inserted = 0
                         skipped_existentes = 0
-                        log_entries = []
-                        hist = _build_hist_similaridade(conn, conta_sel)
 
-                        # Loop de lançamentos
-                        for _, r in df_preview_editado.iterrows():
-                            ja_existe_val = str(r.get("Já existe?", "")).strip().lower()
-                            if ja_existe_val in {"true", "1", "sim"}:
-                                skipped_existentes += 1
-                                log_entries.append(
-                                    f"[Ignorado] '{str(r.get('Descrição', '')).strip()}' – marcado como existente na pré-visualização"
-                                )
+                        for _, r in df_final.iterrows():
+                            desc_original = str(r.get("Descrição", "")).strip()
+                            valor_final = parse_money(r.get("Valor"))
+                            if valor_final is None:
                                 continue
 
-                            desc_original = str(r["Descrição"]).strip()
-                            val = r.get("Valor")
+                            dt_base = r.get("Data")
+                            if isinstance(dt_base, str):
+                                dt_base = parse_date(dt_base)
+                            if isinstance(dt_base, pd.Timestamp):
+                                dt_base = dt_base.date()
 
-                            try:
-                                val_float = float(val)
-                            except (TypeError, ValueError):
-                                log_entries.append(
-                                    f"[Ignorado] '{desc_original}' – valor inválido: {val}"
-                                )
+                            if not isinstance(dt_base, date):
+                                log_entries.append(f"[Ignorado] '{desc_original}' com data inválida")
                                 continue
+
+                            sub_id = r.get("sub_id_sugerido")
+                            if pd.isna(sub_id):
+                                sub_id = None
 
                             desc_norm = _normalize_desc(desc_original)
                             data_original_iso = str(r.get("data_original_iso") or "").strip()
                             if not data_original_iso:
-                                data_original_iso = _safe_date_iso(r.get("Data"))
+                                data_original_iso = dt_base.strftime("%Y-%m-%d")
 
                             p_atual = _safe_int(r.get("Parcela atual", 1))
                             p_total = _safe_int(r.get("Parcelas totais", 1))
+                            parcelado = bool(r.get("Parcelado?") and p_total > 1)
+                            if not parcelado:
+                                p_atual = 1
+                                p_total = 1
+
+                            try:
+                                dt_base_iso = dt_base.strftime("%Y-%m-%d")
+                            except Exception:
+                                log_entries.append(f"[Ignorado] '{desc_original}' com data inválida")
+                                continue
+
                             seq_import = _safe_int(r.get("seq_import", 1))
 
-                            if eh_cartao and mes_ref_cc and ano_ref_cc:
-                                dia_final = min(dia_venc_cc or 1, monthrange(ano_ref_cc, mes_ref_cc)[1])
-                                dt_base = date(ano_ref_cc, mes_ref_cc, dia_final)
-                                if val_float > 0:
-                                    valor_final = -abs(val_float)
-                                    sub_id, _, _ = sugerir_subcategoria(desc_original, hist) if hist else (None, None, 0)
-                                else:
-                                    valor_final = abs(val_float)
-                                    sub_id = None
-                            else:
-                                dt_base = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
-                                sub_id = r.get("sub_id_sugerido", None)
-                                valor_final = val_float
-
-                            if pd.isna(dt_base):
-                                st.warning(
-                                    f"Lançamento '{desc_original}' ignorado por data inválida."
-                                )
-                                log_entries.append(
-                                    f"[Ignorado] '{desc_original}' – data inválida"
-                                )
-                                continue
-
-                            if isinstance(dt_base, pd.Timestamp):
-                                dt_base = dt_base.date()
-                            elif isinstance(dt_base, datetime):
-                                dt_base = dt_base.date()
-
-                            if not isinstance(dt_base, date):
-                                log_entries.append(
-                                    f"[Ignorado] '{desc_original}' – data não reconhecida"
-                                )
-                                continue
-
-                            if not data_original_iso:
-                                data_original_iso = dt_base.strftime("%Y-%m-%d")
-
-                            # Checagem final contra duplicidade antes de inserir
                             cursor.execute(
                                 """
-                                    SELECT 1 FROM transactions
-                                    WHERE account=? AND date=?
-                                      AND ROUND(value, 2)=ROUND(?, 2)
-                                      AND COALESCE(desc_norm, '') = COALESCE(?, '')
-                                      AND COALESCE(parcela_atual, 1) = ?
-                                      AND COALESCE(parcelas_totais, 1) = ?
-                                      AND COALESCE(orig_date, '') = COALESCE(?, '')
-                                      AND COALESCE(import_seq, 1) = ?
+                                    SELECT COUNT(*) FROM transactions
+                                     WHERE account=? AND date=? AND ROUND(value,2)=ROUND(?,2)
+                                       AND COALESCE(desc_norm, '') = COALESCE(?, '')
+                                       AND COALESCE(parcela_atual, 1) = ?
+                                       AND COALESCE(parcelas_totais, 1) = ?
+                                       AND COALESCE(orig_date, '') = COALESCE(?, '')
+                                       AND COALESCE(import_seq, 1) = ?
                                 """,
                                 (
                                     conta_sel,
-                                    dt_base.strftime("%Y-%m-%d"),
+                                    dt_base_iso,
                                     valor_final,
                                     desc_norm,
                                     p_atual,
@@ -1353,37 +1604,41 @@ elif menu == "Importação":
                                     seq_import,
                                 ),
                             )
-                            if cursor.fetchone():
+                            if cursor.fetchone()[0]:
                                 skipped_existentes += 1
                                 log_entries.append(
                                     f"[Ignorado] '{desc_original}' em {dt_base.strftime('%d/%m/%Y')} – já existe"
                                 )
                                 continue
 
-                            # Inserção preservando descrição original
-                            cursor.execute("""
-                                INSERT INTO transactions
-                                    (date, description, desc_norm, value, account, subcategoria_id, status, parcela_atual, parcelas_totais, orig_date, import_seq)
-                                VALUES (?, ?, ?, ?, ?, ?, 'final', ?, ?, ?, ?)
-                            """, (
-                                dt_base.strftime("%Y-%m-%d"),
-                                desc_original,
-                                desc_norm,
-                                valor_final,
-                                conta_sel,
-                                sub_id,
-                                p_atual,
-                                p_total,
-                                data_original_iso,
-                                seq_import,
-                            ))
+                            cursor.execute(
+                                """
+                                    INSERT INTO transactions
+                                        (date, description, desc_norm, value, account, subcategoria_id, status, parcela_atual,
+                                         parcelas_totais, orig_date, import_seq)
+                                    VALUES (?, ?, ?, ?, ?, ?, 'final', ?, ?, ?, ?)
+                                """,
+                                (
+                                    dt_base_iso,
+                                    desc_original,
+                                    desc_norm,
+                                    valor_final,
+                                    conta_sel,
+                                    sub_id,
+                                    p_atual,
+                                    p_total,
+                                    data_original_iso,
+                                    seq_import,
+                                ),
+                            )
                             inserted += 1
                             log_entries.append(
                                 f"[Importado] '{desc_original}' em {dt_base.strftime('%d/%m/%Y')} – valor {valor_final:.2f}"
                             )
 
-                            # Gera parcelas futuras se aplicável
                             if p_total > p_atual:
+                                from dateutil.relativedelta import relativedelta
+
                                 for p in range(p_atual + 1, p_total + 1):
                                     dt_nova = dt_base + relativedelta(months=(p - p_atual))
 
@@ -1430,7 +1685,8 @@ elif menu == "Importação":
 
                                     cursor.execute("""
                                         INSERT INTO transactions
-                                            (date, description, desc_norm, value, account, subcategoria_id, status, parcela_atual, parcelas_totais, orig_date, import_seq)
+                                            (date, description, desc_norm, value, account, subcategoria_id, status, parcela_atual,
+                                             parcelas_totais, orig_date, import_seq)
                                         VALUES (?, ?, ?, ?, ?, ?, 'final', ?, ?, ?, ?)
                                     """, (
                                         dt_nova.strftime("%Y-%m-%d"),
@@ -1450,7 +1706,11 @@ elif menu == "Importação":
                                     )
 
                         conn.commit()
-                        st.session_state["import_log"] = log_entries
+                        if st.session_state.get("import_source_flag") == "openfinance":
+                            st.session_state.pop("itau_last_df", None)
+                            st.session_state.pop("itau_last_label", None)
+                            st.session_state["import_source_flag"] = None
+
                         if skipped_existentes:
                             st.success(
                                 f"{inserted} lançamentos inseridos (incluindo parcelas futuras). "
@@ -1461,24 +1721,30 @@ elif menu == "Importação":
                                 f"{inserted} lançamentos (incluindo parcelas futuras) inseridos com sucesso!"
                             )
                         st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao gravar lançamentos: {e}")
+                        st.session_state.setdefault("import_log", []).append(f"Erro: {e}")
+
+                if st.session_state.get("import_log"):
+                    with st.expander("Log de importação", expanded=True):
+                        col_log, col_btn = st.columns([4, 1])
+                        with col_log:
+                            st.text_area(
+                                "Detalhes do log",
+                                value="\n".join(st.session_state.get("import_log", [])),
+                                height=200,
+                                disabled=True,
+                            )
+                        with col_btn:
+                            if st.button("Limpar log"):
+                                st.session_state["import_log"] = []
+                                st.rerun()
             except Exception as e:
-                st.error(f"Erro ao processar arquivo: {e}")
+                st.error(f"Erro ao processar importação: {e}")
                 st.session_state.setdefault("import_log", []).append(f"Erro: {e}")
 
-            if st.session_state.get("import_log"):
-                with st.expander("Log de importação", expanded=True):
-                    col_log, col_btn = st.columns([4, 1])
-                    with col_log:
-                        st.text_area(
-                            "Detalhes do log",
-                            value="\n".join(st.session_state.get("import_log", [])),
-                            height=200,
-                            disabled=True,
-                        )
-                    with col_btn:
-                        if st.button("Limpar log"):
-                            st.session_state["import_log"] = []
-                            st.rerun()
+        if df_to_process is not None:
+            _run_import_pipeline(df_to_process, origem_label)
 # =====================
 # PLANEJAMENTO (visão mensal)
 # =====================

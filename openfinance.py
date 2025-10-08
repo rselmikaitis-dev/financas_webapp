@@ -1,0 +1,274 @@
+"""Client helper for Itaú Open Finance APIs."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+
+import requests
+
+
+class OpenFinanceError(RuntimeError):
+    """Raised when the Open Finance API returns an error."""
+
+
+@dataclass
+class ItauOpenFinanceConfig:
+    """Configuration payload used by :class:`ItauOpenFinanceClient`."""
+
+    client_id: str
+    client_secret: str
+    consent_id: Optional[str] = None
+    base_url: str = "https://api.itau/open-finance"
+    token_url: str = "https://sts.itau.com.br/api/oauth/token"
+    scope: str = "openid accounts"
+    certificate: Optional[str] = None
+    certificate_key: Optional[str] = None
+    accounts_endpoint: str = "/open-banking/accounts/v1/accounts"
+    transactions_endpoint: str = (
+        "/open-banking/accounts/v1/accounts/{account_id}/transactions"
+    )
+    additional_headers: Dict[str, str] = field(default_factory=dict)
+    timeout: int = 30
+
+    def cert(self) -> Optional[Tuple[str, str] | str]:
+        """Return the ``cert`` tuple expected by :mod:`requests`."""
+
+        if self.certificate and self.certificate_key:
+            return (self.certificate, self.certificate_key)
+        if self.certificate:
+            return self.certificate
+        return None
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "ItauOpenFinanceConfig":
+        """Build a config from a dictionary, ignoring unknown keys."""
+
+        allowed = {field.name for field in cls.__dataclass_fields__.values()}
+        data = {k: v for k, v in payload.items() if k in allowed}
+        return cls(**data)  # type: ignore[arg-type]
+
+
+class ItauOpenFinanceClient:
+    """Small helper to request Itaú Open Finance endpoints."""
+
+    def __init__(self, config: ItauOpenFinanceConfig):
+        self.config = config
+        self._access_token: Optional[str] = None
+        self._token_expiry: Optional[datetime] = None
+
+    # -------------------------
+    # Authentication helpers
+    # -------------------------
+    def get_access_token(self) -> str:
+        """Return a cached OAuth access token."""
+
+        if self._access_token and self._token_expiry:
+            if datetime.utcnow() < self._token_expiry:
+                return self._access_token
+
+        token, expires_in = self._fetch_access_token()
+        self._access_token = token
+        self._token_expiry = datetime.utcnow() + timedelta(seconds=max(expires_in - 60, 0))
+        return token
+
+    def _fetch_access_token(self) -> Tuple[str, int]:
+        payload = {"grant_type": "client_credentials"}
+        if self.config.scope:
+            payload["scope"] = self.config.scope
+        if self.config.consent_id:
+            payload["consent_id"] = self.config.consent_id
+
+        try:
+            response = requests.post(
+                self.config.token_url,
+                data=payload,
+                auth=(self.config.client_id, self.config.client_secret),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                cert=self.config.cert(),
+                timeout=self.config.timeout,
+            )
+        except requests.RequestException as exc:  # pragma: no cover - network errors
+            raise OpenFinanceError(f"Erro ao obter token OAuth: {exc}") from exc
+
+        if response.status_code != 200:
+            raise OpenFinanceError(
+                f"Token OAuth falhou ({response.status_code}): {response.text}"
+            )
+
+        data = response.json()
+        token = data.get("access_token")
+        expires_in = int(data.get("expires_in", 1800))
+        if not token:
+            raise OpenFinanceError("Resposta de token sem 'access_token'.")
+        return token, expires_in
+
+    # -------------------------
+    # HTTP helper
+    # -------------------------
+    def _resolve_url(self, path: str) -> str:
+        if path.startswith("http://") or path.startswith("https://"):
+            return path
+        return f"{self.config.base_url.rstrip('/')}/{path.lstrip('/')}"
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> requests.Response:
+        url = self._resolve_url(path)
+        headers = headers.copy() if headers else {}
+        headers.setdefault("Authorization", f"Bearer {self.get_access_token()}")
+        headers.setdefault("Accept", "application/json")
+        headers.update(self.config.additional_headers)
+
+        try:
+            response = requests.request(
+                method,
+                url,
+                params=params,
+                headers=headers,
+                cert=self.config.cert(),
+                timeout=self.config.timeout,
+            )
+        except requests.RequestException as exc:  # pragma: no cover - network errors
+            raise OpenFinanceError(f"Falha na chamada HTTP: {exc}") from exc
+
+        if response.status_code >= 400:
+            raise OpenFinanceError(
+                f"Erro {response.status_code} ao chamar {url}: {response.text}"
+            )
+        return response
+
+    # -------------------------
+    # Public API
+    # -------------------------
+    def list_accounts(self, page_size: int = 200) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {"page-size": page_size}
+        response = self._request("GET", self.config.accounts_endpoint, params=params)
+        payload = response.json()
+        data = payload.get("data")
+        if isinstance(data, dict) and "accounts" in data:
+            accounts = data.get("accounts", [])
+        else:
+            accounts = data or []
+        if not isinstance(accounts, list):
+            raise OpenFinanceError("Resposta inesperada ao listar contas.")
+        return accounts
+
+    def fetch_transactions(
+        self,
+        account_id: str,
+        *,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        page_size: int = 200,
+    ) -> List[Dict[str, Any]]:
+        if not account_id:
+            raise ValueError("'account_id' é obrigatório.")
+
+        endpoint = self.config.transactions_endpoint.format(account_id=account_id)
+        params: Dict[str, Any] = {"page-size": page_size}
+        if start_date:
+            params["fromBookingDate"] = start_date
+        if end_date:
+            params["toBookingDate"] = end_date
+
+        transactions: List[Dict[str, Any]] = []
+        next_url: Optional[str] = endpoint
+        next_params: Optional[Dict[str, Any]] = params
+
+        while next_url:
+            response = self._request("GET", next_url, params=next_params)
+            payload = response.json()
+            data = payload.get("data")
+            if isinstance(data, dict):
+                current = data.get("transactions") or data.get("items") or []
+            else:
+                current = data or []
+            if not isinstance(current, list):
+                raise OpenFinanceError("Estrutura inesperada na resposta de transações.")
+            transactions.extend(current)
+
+            links = payload.get("links") or {}
+            next_link = links.get("next")
+            if next_link:
+                next_url = next_link
+                next_params = None
+            else:
+                next_url = None
+
+        return transactions
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        s = str(value).replace(".", "").replace(",", ".")
+        return float(s)
+    except Exception:
+        return None
+
+
+def transactions_to_dataframe(transactions: List[Dict[str, Any]]) -> "pd.DataFrame":
+    """Convert the API payload into a pandas DataFrame."""
+
+    import pandas as pd
+
+    rows: List[Dict[str, Any]] = []
+    for item in transactions:
+        amount_payload = item.get("amount")
+        value = None
+        if isinstance(amount_payload, dict):
+            value = _safe_float(amount_payload.get("amount"))
+        else:
+            value = _safe_float(amount_payload)
+        if value is None:
+            continue
+
+        sign_hint = str(item.get("creditDebitType") or item.get("type") or "").lower()
+        if "debit" in sign_hint or "debito" in sign_hint:
+            value = -abs(value)
+        elif "credit" in sign_hint or "credito" in sign_hint:
+            value = abs(value)
+        else:
+            # Alguns payloads já trazem o sinal correto.
+            pass
+
+        description = (
+            item.get("description")
+            or item.get("transactionName")
+            or item.get("transactionType")
+            or item.get("additionalInfo")
+            or item.get("type")
+            or ""
+        )
+        data = (
+            item.get("bookingDate")
+            or item.get("transactionDate")
+            or item.get("valueDateTime")
+            or item.get("effectiveDate")
+            or item.get("date")
+        )
+
+        row: Dict[str, Any] = {
+            "Data": data,
+            "Descrição": description,
+            "Valor": value,
+        }
+        tx_id = item.get("transactionId") or item.get("id")
+        if tx_id:
+            row["Transação ID"] = str(tx_id)
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame(columns=["Data", "Descrição", "Valor"])
+
+    df = pd.DataFrame(rows)
+    return df
