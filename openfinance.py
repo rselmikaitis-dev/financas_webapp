@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -30,6 +30,8 @@ class ItauOpenFinanceConfig:
     )
     additional_headers: Dict[str, str] = field(default_factory=dict)
     timeout: int = 30
+    static_access_token: Optional[str] = None
+    static_token_expires_at: Optional[str] = None
 
     def cert(self) -> Optional[Tuple[str, str] | str]:
         """Return the ``cert`` tuple expected by :mod:`requests`."""
@@ -63,6 +65,19 @@ class ItauOpenFinanceClient:
     def get_access_token(self) -> str:
         """Return a cached OAuth access token."""
 
+        static_token = self.config.static_access_token
+        if static_token:
+            if self._token_expiry is None and self.config.static_token_expires_at:
+                self._token_expiry = self._parse_static_expiry(
+                    self.config.static_token_expires_at
+                )
+            if self._token_expiry and datetime.utcnow() >= self._token_expiry:
+                raise OpenFinanceError(
+                    "Token estático expirado. Atualize o campo 'static_access_token'."
+                )
+            self._access_token = static_token
+            return static_token
+
         if self._access_token and self._token_expiry:
             if datetime.utcnow() < self._token_expiry:
                 return self._access_token
@@ -71,6 +86,28 @@ class ItauOpenFinanceClient:
         self._access_token = token
         self._token_expiry = datetime.utcnow() + timedelta(seconds=max(expires_in - 60, 0))
         return token
+
+    def _parse_static_expiry(self, raw_value: str) -> Optional[datetime]:
+        raw_value = raw_value.strip()
+        if not raw_value:
+            return None
+
+        if raw_value.isdigit():
+            return datetime.utcfromtimestamp(int(raw_value))
+
+        try:
+            candidate = raw_value
+            if candidate.endswith("Z"):
+                candidate = candidate[:-1] + "+00:00"
+            dt = datetime.fromisoformat(candidate)
+        except ValueError as exc:
+            raise OpenFinanceError(
+                "Não foi possível interpretar 'static_token_expires_at'. Use ISO 8601 ou timestamp Unix."
+            ) from exc
+
+        if dt.tzinfo:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
 
     def _fetch_access_token(self) -> Tuple[str, int]:
         payload = {"grant_type": "client_credentials"}
@@ -166,12 +203,15 @@ class ItauOpenFinanceClient:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         page_size: int = 200,
+        extra_params: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         if not account_id:
             raise ValueError("'account_id' é obrigatório.")
 
         endpoint = self.config.transactions_endpoint.format(account_id=account_id)
         params: Dict[str, Any] = {"page-size": page_size}
+        if extra_params:
+            params.update({k: v for k, v in extra_params.items() if v is not None})
         if start_date:
             params["fromBookingDate"] = start_date
         if end_date:

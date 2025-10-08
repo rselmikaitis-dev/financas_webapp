@@ -34,6 +34,10 @@ pip install -r requirements.txt
    certificate = "/app/certs/cert.pem"
    certificate_key = "/app/certs/key.pem"
    scope = "openid accounts transactions"
+   static_access_token = "eyJ..."            # opcional: token estático já obtido
+   static_token_expires_at = "2024-08-30T18:00:00Z"  # ISO 8601 ou timestamp Unix
+   accounts_endpoint = "/open-banking/accounts/v1/accounts"  # opcional
+   transactions_endpoint = "/open-banking/accounts/v1/accounts/{account_id}/transactions"
    # opcional: cabeçalhos adicionais (JSON)
    additional_headers = "{\"x-itau-nonce\": \"...\"}"
    ```
@@ -45,6 +49,6 @@ pip install -r requirements.txt
    - selecionar a conta (`accountId`) e o período desejado;
    - importar as transações diretamente para a base local, utilizando o mesmo fluxo de classificação/edição do upload de arquivos.
 
-4. Caso deseje testar manualmente, é possível informar `client_id`, `client_secret`, `consent_id` e cabeçalhos adicionais diretamente na interface — os valores digitados ficam apenas na sessão atual.
+4. Caso deseje testar manualmente, é possível informar `client_id`, `client_secret`, `consent_id`, token estático, endpoints, cabeçalhos e parâmetros extras diretamente na interface — os valores digitados ficam apenas na sessão atual.
 
 5. Para cartões de crédito cadastrados na aba **Configurações → Contas** com dia de vencimento, continue selecionando o mês/ano de referência antes de importar para que as parcelas futuras sejam geradas corretamente.
