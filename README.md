@@ -29,7 +29,7 @@ pip install -r requirements.txt
    client_id = "..."
    client_secret = "..."
    consent_id = "..."            # opcional dependendo do fluxo
-   base_url = "https://api.itau.com.br/open-banking"
+   base_url = "https://api.itau.com.br"
    token_url = "https://sts.itau.com.br/api/oauth/token"
    certificate = "/app/certs/cert.pem"
    certificate_key = "/app/certs/key.pem"
@@ -43,6 +43,8 @@ pip install -r requirements.txt
    ```
 
    > Os arquivos de certificado/ chave devem estar presentes no contêiner (ex.: pasta `certs/`).
+
+   > Para o sandbox da API "X0 Extrato" utilize `base_url = "https://sandbox.devportal.itau.com.br/itau-x0-api-account-statement-v1-externo/v1"` com `accounts_endpoint = "/accounts"` e `transactions_endpoint = "/accounts/{account_id}/transactions"`.
 
 3. Acesse o menu **Importação → Open Finance Itaú** no app para:
    - listar contas elegíveis (`Atualizar contas Itaú`);
