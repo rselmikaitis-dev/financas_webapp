@@ -29,7 +29,7 @@ pip install -r requirements.txt
    client_id = "..."
    client_secret = "..."
    consent_id = "..."            # opcional dependendo do fluxo
-   base_url = "https://api.itau.com.br/open-banking"
+   base_url = "https://sandbox.devportal.itau.com.br/itau-x0-api-account-statement-v1-externo/v1"
    token_url = "https://sts.itau.com.br/api/oauth/token"
    certificate = "/app/certs/cert.pem"
    certificate_key = "/app/certs/key.pem"

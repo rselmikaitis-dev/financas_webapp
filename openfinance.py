@@ -19,7 +19,9 @@ class ItauOpenFinanceConfig:
     client_id: str
     client_secret: str
     consent_id: Optional[str] = None
-    base_url: str = "https://api.itau.com.br/open-banking"
+    base_url: str = (
+        "https://sandbox.devportal.itau.com.br/itau-x0-api-account-statement-v1-externo/v1"
+    )
     token_url: str = "https://sts.itau.com.br/api/oauth/token"
     scope: str = "openid accounts"
     certificate: Optional[str] = None
