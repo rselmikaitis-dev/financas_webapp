@@ -1179,6 +1179,60 @@ elif menu == "Importação":
                     else:
                         transactions_extra_params = parsed_extra
 
+            def _merge_openfinance_config():
+                payload = {
+                    "client_id": manual_state.get("client_id") or secrets_of.get("client_id", ""),
+                    "client_secret": manual_state.get("client_secret") or secrets_of.get("client_secret", ""),
+                    "consent_id": manual_state.get("consent_id") or secrets_of.get("consent_id"),
+                    "base_url": manual_state.get("base_url") or secrets_of.get("base_url"),
+                    "token_url": manual_state.get("token_url") or secrets_of.get("token_url"),
+                    "certificate": manual_state.get("certificate") or secrets_of.get("certificate"),
+                    "certificate_key": manual_state.get("certificate_key") or secrets_of.get("certificate_key"),
+                    "scope": manual_state.get("scope") or secrets_of.get("scope"),
+                    "static_access_token": manual_state.get("static_access_token")
+                    or secrets_of.get("static_access_token"),
+                    "static_token_expires_at": manual_state.get("static_token_expires_at")
+                    or secrets_of.get("static_token_expires_at"),
+                    "accounts_endpoint": manual_state.get("accounts_endpoint")
+                    or secrets_of.get("accounts_endpoint"),
+                    "transactions_endpoint": manual_state.get("transactions_endpoint")
+                    or secrets_of.get("transactions_endpoint"),
+                    "consents_endpoint": manual_state.get("consents_endpoint")
+                    or secrets_of.get("consents_endpoint"),
+                    "additional_headers": additional_headers,
+                }
+                payload = {k: v for k, v in payload.items() if v not in ("", None)}
+                if payload.get("static_access_token"):
+                    payload.setdefault("client_id", "")
+                    payload.setdefault("client_secret", "")
+                return payload
+
+            def _build_openfinance_client():
+                if not headers_valid or not extra_params_valid:
+                    return None
+                payload = _merge_openfinance_config()
+                has_static = bool(payload.get("static_access_token"))
+                missing = [
+                    field
+                    for field in ("client_id", "client_secret")
+                    if not payload.get(field)
+                ]
+                if missing and not has_static:
+                    st.error(
+                        "Informe client_id e client_secret (via Secrets ou campos acima) ou um token estático válido."
+                    )
+                    return None
+                try:
+                    config = ItauOpenFinanceConfig.from_dict(payload)
+                except TypeError as exc:
+                    st.error(f"Configuração inválida: {exc}")
+                    return None
+
+                for path_check in (config.certificate, config.certificate_key):
+                    if path_check and not os.path.exists(path_check):
+                        st.warning(f"Arquivo não encontrado: {path_check}")
+                return ItauOpenFinanceClient(config)
+
             st.markdown("#### Consentimento Open Finance Itaú")
             st.caption(
                 "Gere e acompanhe consentimentos seguindo o guia em docs/itau_open_finance_consent.md."
@@ -1287,60 +1341,6 @@ elif menu == "Importação":
                 consent_preview = st.session_state.get("itau_last_consent_response")
                 if consent_preview:
                     st.json(consent_preview)
-
-            def _merge_openfinance_config():
-                payload = {
-                    "client_id": manual_state.get("client_id") or secrets_of.get("client_id", ""),
-                    "client_secret": manual_state.get("client_secret") or secrets_of.get("client_secret", ""),
-                    "consent_id": manual_state.get("consent_id") or secrets_of.get("consent_id"),
-                    "base_url": manual_state.get("base_url") or secrets_of.get("base_url"),
-                    "token_url": manual_state.get("token_url") or secrets_of.get("token_url"),
-                    "certificate": manual_state.get("certificate") or secrets_of.get("certificate"),
-                    "certificate_key": manual_state.get("certificate_key") or secrets_of.get("certificate_key"),
-                    "scope": manual_state.get("scope") or secrets_of.get("scope"),
-                    "static_access_token": manual_state.get("static_access_token")
-                    or secrets_of.get("static_access_token"),
-                    "static_token_expires_at": manual_state.get("static_token_expires_at")
-                    or secrets_of.get("static_token_expires_at"),
-                    "accounts_endpoint": manual_state.get("accounts_endpoint")
-                    or secrets_of.get("accounts_endpoint"),
-                    "transactions_endpoint": manual_state.get("transactions_endpoint")
-                    or secrets_of.get("transactions_endpoint"),
-                    "consents_endpoint": manual_state.get("consents_endpoint")
-                    or secrets_of.get("consents_endpoint"),
-                    "additional_headers": additional_headers,
-                }
-                payload = {k: v for k, v in payload.items() if v not in ("", None)}
-                if payload.get("static_access_token"):
-                    payload.setdefault("client_id", "")
-                    payload.setdefault("client_secret", "")
-                return payload
-
-            def _build_openfinance_client():
-                if not headers_valid or not extra_params_valid:
-                    return None
-                payload = _merge_openfinance_config()
-                has_static = bool(payload.get("static_access_token"))
-                missing = [
-                    field
-                    for field in ("client_id", "client_secret")
-                    if not payload.get(field)
-                ]
-                if missing and not has_static:
-                    st.error(
-                        "Informe client_id e client_secret (via Secrets ou campos acima) ou um token estático válido."
-                    )
-                    return None
-                try:
-                    config = ItauOpenFinanceConfig.from_dict(payload)
-                except TypeError as exc:
-                    st.error(f"Configuração inválida: {exc}")
-                    return None
-
-                for path_check in (config.certificate, config.certificate_key):
-                    if path_check and not os.path.exists(path_check):
-                        st.warning(f"Arquivo não encontrado: {path_check}")
-                return ItauOpenFinanceClient(config)
 
             col_btn_accounts, col_btn_clear_accounts, col_btn_clear_preview = st.columns(3)
             with col_btn_accounts:
