@@ -1059,6 +1059,20 @@ elif menu == "Importação":
             )
             manual_state["consent_id"] = consent_id_manual.strip()
 
+            static_token_manual = st.text_area(
+                "Access token estático (opcional – ignora OAuth)",
+                value=manual_state.get("static_access_token", ""),
+                height=120,
+                help="Cole um token JWT já emitido pelo Itaú para reutilizar enquanto for válido.",
+            )
+            manual_state["static_access_token"] = static_token_manual.strip()
+
+            token_expiry_manual = st.text_input(
+                "Expiração do token estático (ISO 8601 ou timestamp, opcional)",
+                value=manual_state.get("static_token_expires_at", ""),
+            )
+            manual_state["static_token_expires_at"] = token_expiry_manual.strip()
+
             col_urls = st.columns(2)
             with col_urls[0]:
                 base_url_manual = st.text_input(
@@ -1067,6 +1081,12 @@ elif menu == "Importação":
                     help="Ex.: https://api.itau.com.br/open-banking",
                 )
                 manual_state["base_url"] = base_url_manual.strip()
+                accounts_endpoint_manual = st.text_input(
+                    "Endpoint de contas (opcional)",
+                    value=manual_state.get("accounts_endpoint", ""),
+                    help="Ex.: /open-banking/accounts/v1/accounts",
+                )
+                manual_state["accounts_endpoint"] = accounts_endpoint_manual.strip()
             with col_urls[1]:
                 token_url_manual = st.text_input(
                     "Token URL (opcional)",
@@ -1074,6 +1094,12 @@ elif menu == "Importação":
                     help="Ex.: https://sts.itau.com.br/api/oauth/token",
                 )
                 manual_state["token_url"] = token_url_manual.strip()
+                transactions_endpoint_manual = st.text_input(
+                    "Endpoint de transações (opcional)",
+                    value=manual_state.get("transactions_endpoint", ""),
+                    help="Ex.: /open-banking/accounts/v1/accounts/{account_id}/transactions",
+                )
+                manual_state["transactions_endpoint"] = transactions_endpoint_manual.strip()
 
             col_cert = st.columns(2)
             with col_cert[0]:
@@ -1124,6 +1150,28 @@ elif menu == "Importação":
                     st.error("Cabeçalhos adicionais inválidos (JSON).")
                     headers_valid = False
 
+            extra_params_valid = True
+            manual_extra_params_text = st.text_area(
+                "Parâmetros extras para transações (JSON opcional)",
+                value=manual_state.get("transactions_extra_params", ""),
+                height=100,
+                help="Objeto JSON será mesclado aos parâmetros de data na chamada de transações.",
+            )
+            manual_state["transactions_extra_params"] = manual_extra_params_text
+            transactions_extra_params = {}
+            if manual_extra_params_text.strip():
+                try:
+                    parsed_extra = json.loads(manual_extra_params_text)
+                except json.JSONDecodeError:
+                    st.error("Parâmetros extras inválidos (JSON). Informe um objeto.")
+                    extra_params_valid = False
+                else:
+                    if not isinstance(parsed_extra, dict):
+                        st.error("Parâmetros extras devem ser um objeto JSON (chave/valor).")
+                        extra_params_valid = False
+                    else:
+                        transactions_extra_params = parsed_extra
+
             def _merge_openfinance_config():
                 payload = {
                     "client_id": manual_state.get("client_id") or secrets_of.get("client_id", ""),
@@ -1134,18 +1182,36 @@ elif menu == "Importação":
                     "certificate": manual_state.get("certificate") or secrets_of.get("certificate"),
                     "certificate_key": manual_state.get("certificate_key") or secrets_of.get("certificate_key"),
                     "scope": manual_state.get("scope") or secrets_of.get("scope"),
+                    "static_access_token": manual_state.get("static_access_token")
+                    or secrets_of.get("static_access_token"),
+                    "static_token_expires_at": manual_state.get("static_token_expires_at")
+                    or secrets_of.get("static_token_expires_at"),
+                    "accounts_endpoint": manual_state.get("accounts_endpoint")
+                    or secrets_of.get("accounts_endpoint"),
+                    "transactions_endpoint": manual_state.get("transactions_endpoint")
+                    or secrets_of.get("transactions_endpoint"),
                     "additional_headers": additional_headers,
                 }
                 payload = {k: v for k, v in payload.items() if v not in ("", None)}
+                if payload.get("static_access_token"):
+                    payload.setdefault("client_id", "")
+                    payload.setdefault("client_secret", "")
                 return payload
 
             def _build_openfinance_client():
-                if not headers_valid:
+                if not headers_valid or not extra_params_valid:
                     return None
                 payload = _merge_openfinance_config()
-                missing = [field for field in ("client_id", "client_secret") if not payload.get(field)]
-                if missing:
-                    st.error("Informe client_id e client_secret (via Secrets ou campos acima).")
+                has_static = bool(payload.get("static_access_token"))
+                missing = [
+                    field
+                    for field in ("client_id", "client_secret")
+                    if not payload.get(field)
+                ]
+                if missing and not has_static:
+                    st.error(
+                        "Informe client_id e client_secret (via Secrets ou campos acima) ou um token estático válido."
+                    )
                     return None
                 try:
                     config = ItauOpenFinanceConfig.from_dict(payload)
@@ -1219,12 +1285,29 @@ elif menu == "Importação":
             manual_state["start_date"] = data_inicio
             manual_state["end_date"] = data_fim
 
+            page_size_value = manual_state.get("page_size")
+            if isinstance(page_size_value, (int, float)):
+                page_size_value = int(page_size_value)
+            else:
+                page_size_value = 200
+            page_size_input = st.number_input(
+                "Page size (tamanho da página)",
+                min_value=1,
+                max_value=2000,
+                value=page_size_value,
+                step=1,
+                help="Altere apenas se a API suportar tamanhos diferentes.",
+            )
+            manual_state["page_size"] = int(page_size_input)
+
             if data_inicio > data_fim:
                 st.error("Data inicial não pode ser posterior à data final.")
 
             if st.button("⬇️ Buscar transações", key="btn_itau_fetch"):
-                if not headers_valid:
-                    st.error("Corrija o JSON dos cabeçalhos adicionais antes de continuar.")
+                if not headers_valid or not extra_params_valid:
+                    st.error(
+                        "Corrija os JSON informados (cabeçalhos adicionais e parâmetros extras) antes de continuar."
+                    )
                 elif not account_id:
                     st.error("Informe o accountId da conta consentida.")
                 else:
@@ -1235,6 +1318,8 @@ elif menu == "Importação":
                                 account_id,
                                 start_date=data_inicio.isoformat(),
                                 end_date=data_fim.isoformat(),
+                                page_size=int(manual_state.get("page_size", 200)),
+                                extra_params=transactions_extra_params,
                             )
                         except OpenFinanceError as exc:
                             st.error(f"Erro ao buscar transações: {exc}")
