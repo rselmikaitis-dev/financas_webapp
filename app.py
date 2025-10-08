@@ -1079,7 +1079,10 @@ elif menu == "Importação":
                 base_url_manual = st.text_input(
                     "Base URL (opcional)",
                     value=manual_state.get("base_url", ""),
-                    help="Ex.: https://api.itau.com.br/open-banking",
+                    help=(
+                        "Ex.: https://sandbox.devportal.itau.com.br/"
+                        "itau-x0-api-account-statement-v1-externo/v1"
+                    ),
                 )
                 manual_state["base_url"] = base_url_manual.strip()
                 accounts_endpoint_manual = st.text_input(
