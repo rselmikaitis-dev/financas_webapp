@@ -17,3 +17,34 @@ Para gerar um hash, use o **expander de “Gerar hash”** na tela de login loca
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+```
+
+## Integração com Itaú Open Finance
+
+1. Cadastre sua aplicação no portal de desenvolvedores do Itaú e habilite o escopo de **Open Finance** conforme a [documentação oficial](https://devportal.itau.com.br/nossas-apis/openfinance).
+2. No arquivo `.streamlit/secrets.toml` (ou nas variáveis de ambiente do Streamlit Cloud) crie a seção `itau_openfinance` com as credenciais e caminhos para os certificados mTLS:
+
+   ```toml
+   [itau_openfinance]
+   client_id = "..."
+   client_secret = "..."
+   consent_id = "..."            # opcional dependendo do fluxo
+   base_url = "https://api.itau.com.br/open-banking"
+   token_url = "https://sts.itau.com.br/api/oauth/token"
+   certificate = "/app/certs/cert.pem"
+   certificate_key = "/app/certs/key.pem"
+   scope = "openid accounts transactions"
+   # opcional: cabeçalhos adicionais (JSON)
+   additional_headers = "{\"x-itau-nonce\": \"...\"}"
+   ```
+
+   > Os arquivos de certificado/ chave devem estar presentes no contêiner (ex.: pasta `certs/`).
+
+3. Acesse o menu **Importação → Open Finance Itaú** no app para:
+   - listar contas elegíveis (`Atualizar contas Itaú`);
+   - selecionar a conta (`accountId`) e o período desejado;
+   - importar as transações diretamente para a base local, utilizando o mesmo fluxo de classificação/edição do upload de arquivos.
+
+4. Caso deseje testar manualmente, é possível informar `client_id`, `client_secret`, `consent_id` e cabeçalhos adicionais diretamente na interface — os valores digitados ficam apenas na sessão atual.
+
+5. Para cartões de crédito cadastrados na aba **Configurações → Contas** com dia de vencimento, continue selecionando o mês/ano de referência antes de importar para que as parcelas futuras sejam geradas corretamente.
