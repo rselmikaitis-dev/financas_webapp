@@ -29,22 +29,28 @@ pip install -r requirements.txt
    client_id = "..."
    client_secret = "..."
    consent_id = "..."            # opcional dependendo do fluxo
-   base_url = "https://api.itau.com.br/open-banking"
+   base_url = "https://api.itau.com.br"
    token_url = "https://sts.itau.com.br/api/oauth/token"
    certificate = "/app/certs/cert.pem"
    certificate_key = "/app/certs/key.pem"
    scope = "openid accounts transactions"
+   static_access_token = "eyJ..."            # opcional: token estático já obtido
+   static_token_expires_at = "2024-08-30T18:00:00Z"  # ISO 8601 ou timestamp Unix
+   accounts_endpoint = "/open-banking/accounts/v1/accounts"  # opcional
+   transactions_endpoint = "/open-banking/accounts/v1/accounts/{account_id}/transactions"
    # opcional: cabeçalhos adicionais (JSON)
    additional_headers = "{\"x-itau-nonce\": \"...\"}"
    ```
 
    > Os arquivos de certificado/ chave devem estar presentes no contêiner (ex.: pasta `certs/`).
 
+   > Para o sandbox da API "X0 Extrato" utilize `base_url = "https://sandbox.devportal.itau.com.br/itau-x0-api-account-statement-v1-externo/v1"` com `accounts_endpoint = "/accounts"` e `transactions_endpoint = "/accounts/{account_id}/transactions"`.
+
 3. Acesse o menu **Importação → Open Finance Itaú** no app para:
    - listar contas elegíveis (`Atualizar contas Itaú`);
    - selecionar a conta (`accountId`) e o período desejado;
    - importar as transações diretamente para a base local, utilizando o mesmo fluxo de classificação/edição do upload de arquivos.
 
-4. Caso deseje testar manualmente, é possível informar `client_id`, `client_secret`, `consent_id` e cabeçalhos adicionais diretamente na interface — os valores digitados ficam apenas na sessão atual.
+4. Caso deseje testar manualmente, é possível informar `client_id`, `client_secret`, `consent_id`, token estático, endpoints, cabeçalhos e parâmetros extras diretamente na interface — os valores digitados ficam apenas na sessão atual.
 
 5. Para cartões de crédito cadastrados na aba **Configurações → Contas** com dia de vencimento, continue selecionando o mês/ano de referência antes de importar para que as parcelas futuras sejam geradas corretamente.
