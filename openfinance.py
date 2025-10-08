@@ -175,6 +175,10 @@ class ItauOpenFinanceClient:
             raise OpenFinanceError(f"Falha na chamada HTTP: {exc}") from exc
 
         if response.status_code >= 400:
+            if response.status_code == 403:
+                raise OpenFinanceError(
+                    "Erro 403 ao chamar Itaú Open Finance. Verifique se o consentimento está autorizado, se o token usa o mesmo consentId e revise o guia em 'docs/itau_open_finance_consent.md'."
+                )
             raise OpenFinanceError(
                 f"Erro {response.status_code} ao chamar {url}: {response.text}"
             )
