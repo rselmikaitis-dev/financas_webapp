@@ -31,6 +31,7 @@ class ItauOpenFinanceConfig:
         "/open-banking/accounts/v1/accounts/{account_id}/transactions"
     )
     consents_endpoint: str = "/open-banking/consents/v1/consents"
+    consents_base_url: Optional[str] = None
     additional_headers: Dict[str, str] = field(default_factory=dict)
     timeout: int = 30
     static_access_token: Optional[str] = None
@@ -283,9 +284,15 @@ class ItauOpenFinanceClient:
         if transaction_to_datetime:
             data_payload["transactionToDateTime"] = transaction_to_datetime
 
+        endpoint = self.config.consents_endpoint
+        if not endpoint.startswith(("http://", "https://")) and self.config.consents_base_url:
+            endpoint = (
+                f"{self.config.consents_base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+            )
+
         response = self._request(
             "POST",
-            self.config.consents_endpoint,
+            endpoint,
             json=body,
         )
         payload = response.json()

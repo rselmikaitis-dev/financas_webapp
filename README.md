@@ -38,6 +38,7 @@ pip install -r requirements.txt
    static_token_expires_at = "2024-08-30T18:00:00Z"  # ISO 8601 ou timestamp Unix
    accounts_endpoint = "/open-banking/accounts/v1/accounts"  # opcional
    transactions_endpoint = "/open-banking/accounts/v1/accounts/{account_id}/transactions"
+   consents_base_url = "https://sandbox.devportal.itau.com.br/itau-x0-api-consents-v1-externo/v1"
    # opcional: cabeçalhos adicionais (JSON)
    additional_headers = "{\"x-itau-nonce\": \"...\"}"
    ```
