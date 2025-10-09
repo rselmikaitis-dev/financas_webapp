@@ -728,7 +728,10 @@ elif menu == "Lançamentos":
 
     # ----- FILTROS -----
     col1, col2, col3, col4, col5 = st.columns(5)
-    contas = ["Todas"] + sorted(df_lanc["Conta"].dropna().unique().tolist())
+    contas_db = [row[0] for row in cursor.execute("SELECT nome FROM contas ORDER BY nome")]
+    contas_lanc = sorted(df_lanc["Conta"].dropna().unique().tolist())
+    contas_unicas = list(dict.fromkeys(contas_db + contas_lanc))
+    contas = ["Todas"] + contas_unicas
     conta_filtro = col1.selectbox("Conta", contas, key="flt_conta")
 
     cats = ["Todas", "Nenhuma"] + sorted(df_lanc["Categoria"].dropna().unique().tolist())
