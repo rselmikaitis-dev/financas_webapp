@@ -1118,6 +1118,7 @@ elif menu == "Importação":
                     ocorrencias = defaultdict(int)
                     chaves_preview = []
                     seq_preview = []
+                    params_consulta = {}
                     for _, r in df_preview.iterrows():
                         desc = str(r["Descrição"]).strip()
                         val = r["Valor"]
@@ -1157,6 +1158,7 @@ elif menu == "Importação":
                             seq_preview.append(None)
                             continue
 
+                        data_cmp_iso = data_cmp.strftime("%Y-%m-%d")
                         data_original_iso = str(r.get("data_original_iso") or "").strip()
                         if not data_original_iso:
                             data_original_iso = _safe_date_iso(r.get("Data"))
@@ -1164,11 +1166,14 @@ elif menu == "Importação":
                         p_atual = _safe_int(r.get("Parcela atual", 1))
                         p_total = _safe_int(r.get("Parcelas totais", 1))
 
+                        desc_norm = _normalize_desc(desc)
+                        valor_cmp_round = round(val_cmp, 2)
+
                         chave_base = (
                             conta_sel,
-                            data_cmp.strftime("%Y-%m-%d"),
-                            round(val_cmp, 2),
-                            _normalize_desc(desc),
+                            data_cmp_iso,
+                            valor_cmp_round,
+                            desc_norm,
                             p_atual,
                             p_total,
                             data_original_iso,
@@ -1181,12 +1186,29 @@ elif menu == "Importação":
                         chaves_preview.append(chave)
                         seq_preview.append(seq_atual)
 
+                        params_consulta[chave] = (
+                            conta_sel,
+                            data_cmp_iso,
+                            valor_cmp_round,
+                            desc_norm,
+                            p_atual,
+                            p_total,
+                            data_original_iso,
+                            data_cmp_iso,
+                            seq_atual,
+                        )
+
                     df_preview["seq_import"] = seq_preview
 
                     # Conta quantos lançamentos já existem para cada chave
                     existentes = {}
                     chaves_validas = {ch for ch in chaves_preview if ch is not None}
                     for chave in chaves_validas:
+                        params = params_consulta.get(chave)
+                        if not params:
+                            existentes[chave] = 0
+                            continue
+
                         cursor.execute(
                             """
                                 SELECT COUNT(*) FROM transactions
@@ -1194,10 +1216,10 @@ elif menu == "Importação":
                                    AND COALESCE(desc_norm, '') = COALESCE(?, '')
                                    AND COALESCE(parcela_atual, 1) = ?
                                    AND COALESCE(parcelas_totais, 1) = ?
-                                   AND COALESCE(orig_date, '') = COALESCE(?, '')
+                                   AND COALESCE(NULLIF(orig_date, ''), date, '') = COALESCE(NULLIF(?, ''), ?, '')
                                    AND COALESCE(import_seq, 1) = ?
                             """,
-                            chave,
+                            params,
                         )
                         count = cursor.fetchone()
                         existentes[chave] = count[0] if count and count[0] else 0
@@ -1339,7 +1361,7 @@ elif menu == "Importação":
                                       AND COALESCE(desc_norm, '') = COALESCE(?, '')
                                       AND COALESCE(parcela_atual, 1) = ?
                                       AND COALESCE(parcelas_totais, 1) = ?
-                                      AND COALESCE(orig_date, '') = COALESCE(?, '')
+                                      AND COALESCE(NULLIF(orig_date, ''), date, '') = COALESCE(NULLIF(?, ''), ?, '')
                                       AND COALESCE(import_seq, 1) = ?
                                 """,
                                 (
@@ -1350,6 +1372,7 @@ elif menu == "Importação":
                                     p_atual,
                                     p_total,
                                     data_original_iso,
+                                    dt_base.strftime("%Y-%m-%d"),
                                     seq_import,
                                 ),
                             )
