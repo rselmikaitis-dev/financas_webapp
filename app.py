@@ -20,12 +20,27 @@ AUTH_PASSWORD_BCRYPT = st.secrets.get(
     "AUTH_PASSWORD_BCRYPT",
     "$2b$12$abcdefghijklmnopqrstuv1234567890abcdefghijklmnopqrstuv12"
 )
+AUTH_PASSWORD_PLAIN = st.secrets.get("AUTH_PASSWORD_PLAIN")
 
 def check_password(plain: str, hashed: str) -> bool:
     try:
         return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
     except Exception:
         return False
+
+def authenticate(username: str, password: str) -> bool:
+    if username != AUTH_USERNAME:
+        return False
+
+    password = password or ""
+    if AUTH_PASSWORD_BCRYPT and check_password(password, AUTH_PASSWORD_BCRYPT):
+        return True
+
+    if AUTH_PASSWORD_PLAIN is not None and password == str(AUTH_PASSWORD_PLAIN):
+        return True
+
+    return False
+
 
 def login_view():
     st.title("Login – Controle Financeiro")
@@ -34,7 +49,7 @@ def login_view():
         p = st.text_input("Senha", type="password")
         submitted = st.form_submit_button("Entrar")
         if submitted:
-            if u == AUTH_USERNAME and check_password(p, AUTH_PASSWORD_BCRYPT):
+            if authenticate(u, p):
                 st.session_state["auth_ok"] = True
                 st.rerun()
             else:
