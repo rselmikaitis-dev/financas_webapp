@@ -1,16 +1,32 @@
+import os
 import re
+import secrets
+import smtplib
 import sqlite3
 from collections import defaultdict
+from datetime import date, datetime, timedelta
+from email.message import EmailMessage
 
 import bcrypt
 import numpy as np
 import pandas as pd
 import streamlit as st
-from datetime import date, datetime, timedelta
 from streamlit_option_menu import option_menu
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 
 st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="wide")
+
+DEFAULT_USER_EMAILS = {"rafael": "rselmikaitis@gmail.com"}
+RESET_CODE_TTL_MINUTES = int(st.secrets.get("RESET_CODE_TTL_MINUTES", 15))
+
+EMAIL_SETTINGS = {
+    "host": st.secrets.get("EMAIL_SMTP_HOST"),
+    "port": st.secrets.get("EMAIL_SMTP_PORT"),
+    "username": st.secrets.get("EMAIL_SMTP_USERNAME"),
+    "password": st.secrets.get("EMAIL_SMTP_PASSWORD"),
+    "use_tls": st.secrets.get("EMAIL_SMTP_USE_TLS", True),
+    "from": st.secrets.get("EMAIL_FROM"),
+}
 
 # =====================
 # AUTENTICAÇÃO
@@ -21,6 +37,258 @@ AUTH_PASSWORD_BCRYPT = st.secrets.get(
     "$2b$12$abcdefghijklmnopqrstuv1234567890abcdefghijklmnopqrstuv12"
 )
 AUTH_PASSWORD_PLAIN = st.secrets.get("AUTH_PASSWORD_PLAIN")
+AUTH_EMAIL = st.secrets.get("AUTH_EMAIL")
+
+
+def ensure_users_table(conn: sqlite3.Connection) -> None:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT,
+            email TEXT,
+            reset_code_hash TEXT,
+            reset_code_expires TEXT
+        )
+        """
+    )
+    conn.commit()
+
+
+def infer_default_email(username: str) -> str | None:
+    email = AUTH_EMAIL
+    if not email:
+        email = DEFAULT_USER_EMAILS.get(username.lower())
+    return email
+
+
+def ensure_default_user(conn: sqlite3.Connection) -> None:
+    ensure_users_table(conn)
+    cursor = conn.cursor()
+    email = infer_default_email(AUTH_USERNAME)
+
+    hashed = AUTH_PASSWORD_BCRYPT
+    if (not hashed or not hashed.startswith("$2")) and AUTH_PASSWORD_PLAIN is not None:
+        try:
+            hashed = bcrypt.hashpw(str(AUTH_PASSWORD_PLAIN).encode("utf-8"), bcrypt.gensalt()).decode(
+                "utf-8"
+            )
+        except Exception:
+            hashed = None
+
+    row = cursor.execute(
+        "SELECT id, password_hash, email FROM users WHERE username=?",
+        (AUTH_USERNAME,),
+    ).fetchone()
+
+    if row is None:
+        cursor.execute(
+            "INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)",
+            (AUTH_USERNAME, hashed, email),
+        )
+        conn.commit()
+        return
+
+    updates = []
+    params: list[str] = []
+
+    if hashed and (row[1] or "") != hashed:
+        updates.append("password_hash=?")
+        params.append(hashed)
+
+    if email and (row[2] or "").lower() != email.lower():
+        updates.append("email=?")
+        params.append(email)
+
+    if updates:
+        params.append(row[0])
+        cursor.execute(f"UPDATE users SET {', '.join(updates)} WHERE id=?", params)
+        conn.commit()
+
+
+def get_auth_connection() -> sqlite3.Connection:
+    conn = st.session_state.get("conn")
+    if conn is None:
+        conn = sqlite3.connect("data.db", check_same_thread=False)
+        st.session_state.conn = conn
+    ensure_default_user(conn)
+    return conn
+
+
+def fetch_user(conn: sqlite3.Connection, username: str):
+    cursor = conn.cursor()
+    return cursor.execute(
+        "SELECT id, username, password_hash, email, reset_code_hash, reset_code_expires FROM users WHERE LOWER(username)=LOWER(?)",
+        (username,),
+    ).fetchone()
+
+
+def mask_email(email: str) -> str:
+    if not email:
+        return ""
+    email = email.strip()
+    if "@" not in email:
+        return email
+    local, domain = email.split("@", 1)
+    if len(local) <= 2:
+        masked_local = local[0] + "*" * (len(local) - 1)
+    else:
+        masked_local = local[0] + "*" * (len(local) - 2) + local[-1]
+    return f"{masked_local}@{domain}"
+
+
+def send_reset_email(destination: str, code: str) -> tuple[bool, str]:
+    host = EMAIL_SETTINGS.get("host")
+    port = EMAIL_SETTINGS.get("port")
+    username = EMAIL_SETTINGS.get("username")
+    password = EMAIL_SETTINGS.get("password")
+    use_tls = EMAIL_SETTINGS.get("use_tls", True)
+    sender = EMAIL_SETTINGS.get("from") or username
+
+    if not destination:
+        return False, "O usuário não possui um e-mail cadastrado."
+
+    if not host or not port:
+        return False, "Configurações de SMTP não foram definidas."
+
+    try:
+        port_int = int(port)
+    except (TypeError, ValueError):
+        port_int = 587 if use_tls else 25
+
+    if not sender:
+        return False, "Remetente do e-mail não configurado."
+
+    msg = EmailMessage()
+    msg["Subject"] = "Código para redefinição de senha"
+    msg["From"] = sender
+    msg["To"] = destination
+    msg.set_content(
+        (
+            "Olá!\n\n"
+            "Recebemos uma solicitação para redefinir sua senha no Controle Financeiro.\n"
+            f"Utilize o código abaixo dentro de {RESET_CODE_TTL_MINUTES} minuto(s):\n\n"
+            f"Código: {code}\n\n"
+            "Se você não fez esta solicitação, ignore este e-mail."
+        )
+    )
+
+    try:
+        with smtplib.SMTP(host, port_int, timeout=10) as server:
+            if use_tls:
+                server.starttls()
+            if username and password:
+                server.login(username, password)
+            server.send_message(msg)
+        return True, ""
+    except Exception as exc:
+        return False, f"Falha ao enviar o e-mail: {exc}"
+
+
+def set_reset_code(conn: sqlite3.Connection, user_id: int, code: str) -> None:
+    hashed_code = bcrypt.hashpw(code.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    expires_at = (datetime.utcnow() + timedelta(minutes=RESET_CODE_TTL_MINUTES)).isoformat()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET reset_code_hash=?, reset_code_expires=? WHERE id=?",
+        (hashed_code, expires_at, user_id),
+    )
+    conn.commit()
+
+
+def clear_reset_code(conn: sqlite3.Connection, user_id: int) -> None:
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET reset_code_hash=NULL, reset_code_expires=NULL WHERE id=?",
+        (user_id,),
+    )
+    conn.commit()
+
+
+def update_user_password(conn: sqlite3.Connection, user_id: int, new_password: str) -> None:
+    hashed = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET password_hash=? WHERE id=?", (hashed, user_id))
+    conn.commit()
+
+
+def validate_reset_code(row, code: str) -> tuple[bool, str]:
+    if not row:
+        return False, "Usuário não encontrado."
+
+    stored_hash = row[4]
+    expires_at = row[5]
+
+    if not stored_hash or not expires_at:
+        return False, "Nenhum código ativo foi localizado para este usuário."
+
+    try:
+        expires_dt = datetime.fromisoformat(str(expires_at))
+    except Exception:
+        expires_dt = None
+
+    if expires_dt and datetime.utcnow() > expires_dt:
+        return False, "O código expirou. Solicite um novo envio."
+
+    if not check_password(code, stored_hash):
+        return False, "Código inválido."
+
+    return True, ""
+
+
+def handle_password_reset_request(username: str, email_input: str) -> tuple[bool, str, str | None]:
+    username = (username or "").strip()
+    if not username:
+        return False, "Informe o usuário.", None
+
+    conn = get_auth_connection()
+    row = fetch_user(conn, username)
+
+    if row is None:
+        return False, "Usuário não encontrado.", None
+
+    stored_email = (row[3] or "").strip()
+    if not stored_email:
+        return False, "Usuário não possui um e-mail cadastrado.", None
+
+    if email_input and email_input.strip().lower() != stored_email.lower():
+        return False, "O e-mail informado não corresponde ao cadastrado.", None
+
+    code = f"{secrets.randbelow(10**6):06d}"
+    set_reset_code(conn, row[0], code)
+
+    ok, msg = send_reset_email(stored_email, code)
+    if not ok:
+        return False, msg, None
+
+    canonical_username = row[1]
+    return True, f"Enviamos um código para {mask_email(stored_email)}.", canonical_username
+
+
+def handle_password_reset_confirmation(username: str, code: str, new_password: str) -> tuple[bool, str, str | None]:
+    username = (username or "").strip()
+    code = (code or "").strip()
+    new_password = new_password or ""
+
+    if not username or not code or not new_password:
+        return False, "Preencha usuário, código e a nova senha.", None
+
+    if len(new_password) < 6:
+        return False, "A nova senha deve ter ao menos 6 caracteres.", None
+
+    conn = get_auth_connection()
+    row = fetch_user(conn, username)
+    ok, msg = validate_reset_code(row, code)
+    if not ok:
+        return False, msg, None
+
+    update_user_password(conn, row[0], new_password)
+    clear_reset_code(conn, row[0])
+
+    canonical_username = row[1]
+    return True, "Senha atualizada com sucesso!", canonical_username
 
 def check_password(plain: str, hashed: str) -> bool:
     try:
@@ -29,31 +297,125 @@ def check_password(plain: str, hashed: str) -> bool:
         return False
 
 def authenticate(username: str, password: str) -> bool:
-    if username != AUTH_USERNAME:
+    conn = get_auth_connection()
+    row = fetch_user(conn, username)
+
+    if row is None:
         return False
 
+    stored_hash = row[2]
     password = password or ""
-    if AUTH_PASSWORD_BCRYPT and check_password(password, AUTH_PASSWORD_BCRYPT):
+
+    if stored_hash and check_password(password, stored_hash):
         return True
 
-    if AUTH_PASSWORD_PLAIN is not None and password == str(AUTH_PASSWORD_PLAIN):
-        return True
+    if username == AUTH_USERNAME:
+        if AUTH_PASSWORD_BCRYPT and check_password(password, AUTH_PASSWORD_BCRYPT):
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET password_hash=? WHERE id=?",
+                (AUTH_PASSWORD_BCRYPT, row[0]),
+            )
+            conn.commit()
+            return True
+
+        if AUTH_PASSWORD_PLAIN is not None and password == str(AUTH_PASSWORD_PLAIN):
+            update_user_password(conn, row[0], password)
+            return True
 
     return False
 
 
 def login_view():
     st.title("Login – Controle Financeiro")
-    with st.form("login_form"):
-        u = st.text_input("Usuário")
-        p = st.text_input("Senha", type="password")
-        submitted = st.form_submit_button("Entrar")
-        if submitted:
-            if authenticate(u, p):
-                st.session_state["auth_ok"] = True
-                st.rerun()
-            else:
-                st.toast("Usuário ou senha inválidos ⚠️", icon="⚠️")
+
+    if "reset_stage" not in st.session_state:
+        st.session_state.reset_stage = "request"
+    if "reset_username" not in st.session_state:
+        st.session_state.reset_username = ""
+
+    tab_login, tab_reset = st.tabs(["Entrar", "Recuperar senha"])
+
+    with tab_login:
+        with st.form("login_form"):
+            default_user = st.session_state.get("reset_username") or st.session_state.get("last_username", "")
+            u = st.text_input("Usuário", value=default_user)
+            p = st.text_input("Senha", type="password")
+            submitted = st.form_submit_button("Entrar")
+            if submitted:
+                st.session_state["last_username"] = u
+                if authenticate(u, p):
+                    st.session_state["auth_ok"] = True
+                    st.session_state["auth_user"] = u
+                    st.session_state.pop("reset_stage", None)
+                    st.session_state.pop("reset_username", None)
+                    st.rerun()
+                else:
+                    st.toast("Usuário ou senha inválidos ⚠️", icon="⚠️")
+
+    with tab_reset:
+        stage = st.session_state.get("reset_stage", "request")
+
+        if stage == "request":
+            with st.form("reset_request_form"):
+                username = st.text_input(
+                    "Usuário",
+                    value=st.session_state.get("reset_username", ""),
+                )
+                email = st.text_input("E-mail cadastrado (opcional)")
+                submitted = st.form_submit_button("Enviar código por e-mail")
+
+                if submitted:
+                    success, message, canonical_username = handle_password_reset_request(username, email)
+                    if success:
+                        st.session_state.reset_stage = "verify"
+                        st.session_state.reset_username = canonical_username
+                        st.success(message)
+                    else:
+                        st.error(message)
+
+        elif stage == "verify":
+            with st.form("reset_verify_form"):
+                username = st.text_input(
+                    "Usuário",
+                    value=st.session_state.get("reset_username", ""),
+                )
+                code = st.text_input("Código recebido")
+                new_password = st.text_input("Nova senha", type="password")
+                confirm_password = st.text_input("Confirmar nova senha", type="password")
+                submitted = st.form_submit_button("Atualizar senha")
+
+                if submitted:
+                    if new_password != confirm_password:
+                        st.error("As senhas informadas não conferem.")
+                    else:
+                        success, message, canonical_username = handle_password_reset_confirmation(
+                            username, code, new_password
+                        )
+                        if success:
+                            st.success(message)
+                            st.session_state.reset_stage = "request"
+                            st.session_state.reset_username = canonical_username
+                        else:
+                            st.error(message)
+
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                if st.button("Voltar", type="secondary"):
+                    st.session_state.reset_stage = "request"
+                    st.session_state.reset_username = st.session_state.get("reset_username", "")
+            with col2:
+                if st.button("Enviar novo código"):
+                    username = st.session_state.get("reset_username", "")
+                    if username:
+                        success, message, canonical_username = handle_password_reset_request(username, "")
+                        if success:
+                            st.success(message)
+                            st.session_state.reset_username = canonical_username
+                        else:
+                            st.error(message)
+                    else:
+                        st.warning("Informe o usuário para solicitar um novo código.")
 
 if "auth_ok" not in st.session_state or not st.session_state["auth_ok"]:
     login_view()
@@ -65,14 +427,13 @@ with logout_col:
     if st.button("Sair", type="secondary"):
         st.session_state.clear()
         st.rerun()
-
-import os
 # =====================
 # BANCO DE DADOS
 # =====================
 
 def garantir_schema(conn):
     cursor = conn.cursor()
+    ensure_users_table(conn)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS contas (
             id INTEGER PRIMARY KEY,
