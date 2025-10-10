@@ -189,11 +189,11 @@ def send_reset_email(destination: str, code: str) -> tuple[bool, str]:
     if not destination:
         return False, "O usuário não possui um e-mail cadastrado."
 
-    if not host or not port:
+    if not host:
         return False, "Configurações de SMTP não foram definidas."
 
     try:
-        port_int = int(port)
+        port_int = int(port) if port else (587 if use_tls else 25)
     except (TypeError, ValueError):
         port_int = 587 if use_tls else 25
 
