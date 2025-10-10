@@ -16,10 +16,15 @@ st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="w
 # AUTENTICAÇÃO
 # =====================
 AUTH_USERNAME = st.secrets.get("AUTH_USERNAME", "rafael")
-AUTH_PASSWORD_BCRYPT = st.secrets.get(
-    "AUTH_PASSWORD_BCRYPT",
+
+_DEFAULT_HASH_PLACEHOLDER = (
     "$2b$12$abcdefghijklmnopqrstuv1234567890abcdefghijklmnopqrstuv12"
 )
+
+AUTH_PASSWORD_BCRYPT = st.secrets.get("AUTH_PASSWORD_BCRYPT")
+if AUTH_PASSWORD_BCRYPT == _DEFAULT_HASH_PLACEHOLDER:
+    AUTH_PASSWORD_BCRYPT = None
+
 AUTH_PASSWORD_PLAIN = st.secrets.get("AUTH_PASSWORD_PLAIN")
 
 def check_password(plain: str, hashed: str) -> bool:
@@ -44,6 +49,11 @@ def authenticate(username: str, password: str) -> bool:
 
 def login_view():
     st.title("Login – Controle Financeiro")
+    if not AUTH_PASSWORD_BCRYPT and AUTH_PASSWORD_PLAIN is None:
+        st.info(
+            "Configure as credenciais em `.streamlit/secrets.toml` "
+            "(chaves `AUTH_USERNAME`, `AUTH_PASSWORD_BCRYPT` ou `AUTH_PASSWORD_PLAIN`)."
+        )
     with st.form("login_form"):
         u = st.text_input("Usuário")
         p = st.text_input("Senha", type="password")
