@@ -1118,6 +1118,17 @@ elif menu == "Importação":
                         except (TypeError, ValueError):
                             return default
 
+                    def _safe_sub_id(val):
+                        try:
+                            if pd.isna(val):
+                                return None
+                        except TypeError:
+                            pass
+                        try:
+                            return int(float(val))
+                        except (TypeError, ValueError):
+                            return None
+
                     ocorrencias = defaultdict(int)
                     chaves_preview = []
                     seq_preview = []
@@ -1318,18 +1329,22 @@ elif menu == "Importação":
                             p_total = _safe_int(r.get("Parcelas totais", 1))
                             seq_import = _safe_int(r.get("seq_import", 1))
 
+                            sub_id_manual = _safe_sub_id(r.get("sub_id_sugerido", None))
+
                             if eh_cartao and mes_ref_cc and ano_ref_cc:
                                 dia_final = min(dia_venc_cc or 1, monthrange(ano_ref_cc, mes_ref_cc)[1])
                                 dt_base = date(ano_ref_cc, mes_ref_cc, dia_final)
                                 if val_float > 0:
                                     valor_final = -abs(val_float)
-                                    sub_id, _, _ = sugerir_subcategoria(desc_original, hist) if hist else (None, None, 0)
+                                    sub_id = sub_id_manual
+                                    if sub_id is None:
+                                        sub_id, _, _ = sugerir_subcategoria(desc_original, hist) if hist else (None, None, 0)
                                 else:
                                     valor_final = abs(val_float)
-                                    sub_id = None
+                                    sub_id = sub_id_manual
                             else:
                                 dt_base = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
-                                sub_id = r.get("sub_id_sugerido", None)
+                                sub_id = sub_id_manual
                                 valor_final = val_float
 
                             if pd.isna(dt_base):
