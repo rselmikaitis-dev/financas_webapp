@@ -16,28 +16,67 @@ from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 
 st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="wide")
 
+
+SETTING_ALIASES = {
+    "EMAIL_SMTP_HOST": ("email", "smtp_host"),
+    "EMAIL_SMTP_PORT": ("email", "smtp_port"),
+    "EMAIL_SMTP_USERNAME": ("email", "smtp_username"),
+    "EMAIL_SMTP_PASSWORD": ("email", "smtp_password"),
+    "EMAIL_SMTP_USE_TLS": ("email", "smtp_use_tls"),
+    "EMAIL_FROM": ("email", "from_address"),
+    "RESET_CODE_TTL_MINUTES": ("app", "reset_code_ttl_minutes"),
+}
+
+
+def get_setting(key: str, default=None):
+    value = st.secrets.get(key, None)
+    if value is None and key in SETTING_ALIASES:
+        section, subkey = SETTING_ALIASES[key]
+        section_values = st.secrets.get(section, {})
+        if isinstance(section_values, dict):
+            value = section_values.get(subkey, None)
+    if value is None:
+        value = os.environ.get(key, default)
+    return value
+
+
+def get_bool_setting(key: str, default: bool = False) -> bool:
+    value = get_setting(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        value = value.strip().lower()
+        if value in {"1", "true", "t", "yes", "y", "on"}:
+            return True
+        if value in {"0", "false", "f", "no", "n", "off"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return bool(default)
+
+
 DEFAULT_USER_EMAILS = {"rafael": "rselmikaitis@gmail.com"}
-RESET_CODE_TTL_MINUTES = int(st.secrets.get("RESET_CODE_TTL_MINUTES", 15))
+RESET_CODE_TTL_MINUTES = int(get_setting("RESET_CODE_TTL_MINUTES", 15))
 
 EMAIL_SETTINGS = {
-    "host": st.secrets.get("EMAIL_SMTP_HOST"),
-    "port": st.secrets.get("EMAIL_SMTP_PORT"),
-    "username": st.secrets.get("EMAIL_SMTP_USERNAME"),
-    "password": st.secrets.get("EMAIL_SMTP_PASSWORD"),
-    "use_tls": st.secrets.get("EMAIL_SMTP_USE_TLS", True),
-    "from": st.secrets.get("EMAIL_FROM"),
+    "host": get_setting("EMAIL_SMTP_HOST"),
+    "port": get_setting("EMAIL_SMTP_PORT"),
+    "username": get_setting("EMAIL_SMTP_USERNAME"),
+    "password": get_setting("EMAIL_SMTP_PASSWORD"),
+    "use_tls": get_bool_setting("EMAIL_SMTP_USE_TLS", True),
+    "from": get_setting("EMAIL_FROM"),
 }
 
 # =====================
 # AUTENTICAÇÃO
 # =====================
-AUTH_USERNAME = st.secrets.get("AUTH_USERNAME", "rafael")
-AUTH_PASSWORD_BCRYPT = st.secrets.get(
+AUTH_USERNAME = get_setting("AUTH_USERNAME", "rafael")
+AUTH_PASSWORD_BCRYPT = get_setting(
     "AUTH_PASSWORD_BCRYPT",
     "$2b$12$abcdefghijklmnopqrstuv1234567890abcdefghijklmnopqrstuv12"
 )
-AUTH_PASSWORD_PLAIN = st.secrets.get("AUTH_PASSWORD_PLAIN")
-AUTH_EMAIL = st.secrets.get("AUTH_EMAIL")
+AUTH_PASSWORD_PLAIN = get_setting("AUTH_PASSWORD_PLAIN")
+AUTH_EMAIL = get_setting("AUTH_EMAIL")
 
 
 def ensure_users_table(conn: sqlite3.Connection) -> None:
