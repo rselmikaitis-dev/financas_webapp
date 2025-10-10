@@ -3,6 +3,7 @@ import re
 import secrets
 import smtplib
 import sqlite3
+import traceback
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from email.message import EmailMessage
@@ -1918,8 +1919,17 @@ elif menu == "Importação":
                             )
                         st.rerun()
             except Exception as e:
-                st.error(f"Erro ao processar arquivo: {e}")
-                st.session_state.setdefault("import_log", []).append(f"Erro: {e}")
+                traceback_text = "".join(
+                    traceback.format_exception(type(e), e, e.__traceback__)
+                )
+                st.error(
+                    "Erro ao processar arquivo: "
+                    f"{e}. Veja os detalhes técnicos no painel abaixo."
+                )
+                log = st.session_state.setdefault("import_log", [])
+                log.append(f"Erro: {e}")
+                log.append(traceback_text)
+                st.session_state["import_error_details"] = traceback_text
 
             if st.session_state.get("import_log"):
                 with st.expander("Log de importação", expanded=True):
@@ -1935,6 +1945,14 @@ elif menu == "Importação":
                         if st.button("Limpar log"):
                             st.session_state["import_log"] = []
                             st.rerun()
+            if st.session_state.get("import_error_details"):
+                with st.expander("Detalhes técnicos do último erro", expanded=False):
+                    st.code(st.session_state["import_error_details"])
+                    if st.button(
+                        "Limpar detalhes técnicos", key="clear_import_error_details"
+                    ):
+                        st.session_state.pop("import_error_details", None)
+                        st.rerun()
 # =====================
 # PLANEJAMENTO (visão mensal)
 # =====================
