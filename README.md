@@ -13,17 +13,6 @@ Web app em **Streamlit** com **login (bcrypt)** para importar extratos de **cont
 
 Para gerar um hash, use o **expander de “Gerar hash”** na tela de login localmente, copie o hash e cole em `Secrets`.
 
-### Exemplo de `.streamlit/secrets.toml`
-
-```toml
-AUTH_USERNAME = "rafael"
-# Use um dos dois campos abaixo (deixe o outro vazio)
-AUTH_PASSWORD_BCRYPT = "$2b$12$..."  # hash gerado pela tela de login
-AUTH_PASSWORD_PLAIN = "Naomi!@05"     # apenas para testes locais
-```
-
-> Importante: em TOML, senhas com caracteres especiais precisam estar entre aspas.
-
 ## Como rodar no Mac
 
 1. Python 3.10+
