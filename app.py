@@ -1864,11 +1864,13 @@ elif menu == "Planejamento":
 # =====================
 elif menu == "Configurações":
     st.header("Configurações")
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Dados", "Contas", "Categorias", "Subcategorias", "SQL Console"])
+    tab_dados, tab_dup, tab_contas, tab_categorias, tab_subcategorias, tab_sql = st.tabs(
+        ["Dados", "Duplicidades", "Contas", "Categorias", "Subcategorias", "SQL Console"]
+    )
 
     # ---- DADOS ----
      
-    with tab1:
+    with tab_dados:
         st.subheader("Gerenciar Dados")
 
         # =========================
@@ -1983,8 +1985,213 @@ elif menu == "Configurações":
             conn.commit()
             st.warning("Banco resetado com sucesso! Todas as tabelas estão vazias.")
 
+    # ---- DUPLICIDADES ----
+    with tab_dup:
+        st.subheader("Possíveis duplicidades por conta e mês")
+        st.caption(
+            "A análise considera lançamentos da mesma conta e mês com descrição normalizada e/ou valor iguais."
+        )
+
+        df_trans = pd.read_sql_query(
+            """
+                SELECT t.id, t.date, t.description, t.value, t.account,
+                       COALESCE(t.desc_norm, '') AS desc_norm,
+                       COALESCE(c.nome || ' → ' || s.nome, 'Nenhuma') AS cat_sub
+                  FROM transactions t
+             LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
+             LEFT JOIN categorias c ON s.categoria_id = c.id
+            """,
+            conn,
+        )
+
+        if df_trans.empty:
+            st.info("Nenhum lançamento cadastrado até o momento.")
+        else:
+            df_trans["date"] = pd.to_datetime(df_trans["date"], errors="coerce")
+            df_trans = df_trans.dropna(subset=["date"])  # precisa da data para identificar o mês
+
+            if df_trans.empty:
+                st.info("Nenhum lançamento possui data válida para análise de duplicidades.")
+            else:
+                df_trans["account"] = df_trans["account"].fillna("Sem conta")
+                df_trans["description"] = df_trans["description"].fillna("")
+                df_trans["desc_norm"] = df_trans["desc_norm"].fillna("").astype(str).str.strip()
+
+                mask_desc_vazia = df_trans["desc_norm"] == ""
+                if mask_desc_vazia.any():
+                    df_trans.loc[mask_desc_vazia, "desc_norm"] = df_trans.loc[mask_desc_vazia, "description"].map(
+                        _normalize_desc
+                    )
+
+                df_trans["valor_float"] = pd.to_numeric(df_trans["value"], errors="coerce")
+                df_trans["valor_arredondado"] = df_trans["valor_float"].round(2)
+                df_trans["ano"] = df_trans["date"].dt.year
+                df_trans["mes"] = df_trans["date"].dt.month
+                df_trans["competencia"] = df_trans["date"].dt.to_period("M").astype(str)
+
+                group_desc = df_trans.groupby(
+                    ["account", "ano", "mes", "desc_norm"], dropna=False
+                )["id"].transform("count")
+                group_val = df_trans.groupby(
+                    ["account", "ano", "mes", "valor_arredondado"], dropna=False
+                )["id"].transform("count")
+
+                df_trans["qtd_desc"] = group_desc.fillna(0).astype(int)
+                df_trans["qtd_valor"] = group_val.fillna(0).astype(int)
+                df_trans["dup_desc"] = (df_trans["qtd_desc"] > 1) & df_trans["desc_norm"].str.len().gt(0)
+                df_trans["dup_val"] = (df_trans["qtd_valor"] > 1) & df_trans["valor_arredondado"].notna()
+
+                df_dups = df_trans[df_trans["dup_desc"] | df_trans["dup_val"]].copy()
+
+                if df_dups.empty:
+                    st.success("Nenhuma possível duplicidade encontrada ✅")
+                else:
+                    df_dups["id"] = pd.to_numeric(df_dups["id"], errors="coerce")
+                    df_dups = df_dups.dropna(subset=["id"])
+                    df_dups["id"] = df_dups["id"].astype(int)
+
+                    competencias_raw = sorted(df_dups["competencia"].dropna().unique().tolist(), reverse=True)
+                    comp_labels: dict[str, str] = {}
+                    for comp in competencias_raw:
+                        try:
+                            comp_labels[comp] = datetime.strptime(comp, "%Y-%m").strftime("%m/%Y")
+                        except Exception:
+                            comp_labels[comp] = comp
+
+                    contas_opts = sorted(df_dups["account"].dropna().unique().tolist())
+
+                    col_f1, col_f2 = st.columns(2)
+                    conta_sel_dup = col_f1.selectbox(
+                        "Conta",
+                        ["Todas"] + contas_opts,
+                        key="dup_conta_sel",
+                    )
+
+                    competencia_opcoes = ["Todos"] + competencias_raw
+
+                    def _format_comp(opcao: str) -> str:
+                        if opcao == "Todos":
+                            return "Todos"
+                        return comp_labels.get(opcao, opcao)
+
+                    competencia_sel = None
+                    if competencia_opcoes:
+                        competencia_sel = col_f2.selectbox(
+                            "Mês/ano",
+                            competencia_opcoes,
+                            format_func=_format_comp,
+                            key="dup_comp_sel",
+                        )
+
+                    df_filtrado = df_dups.copy()
+                    if conta_sel_dup != "Todas":
+                        df_filtrado = df_filtrado[df_filtrado["account"] == conta_sel_dup]
+                    if competencia_sel and competencia_sel != "Todos":
+                        df_filtrado = df_filtrado[df_filtrado["competencia"] == competencia_sel]
+
+                    if df_filtrado.empty:
+                        st.info("Nenhuma duplicidade encontrada para os filtros selecionados.")
+                    else:
+                        def _motivo(row) -> str:
+                            partes = []
+                            if row.get("dup_desc"):
+                                partes.append("Descrição")
+                            if row.get("dup_val"):
+                                partes.append("Valor")
+                            if len(partes) > 1:
+                                return " e ".join(partes)
+                            return partes[0] if partes else "-"
+
+                        df_filtrado = df_filtrado.copy()
+                        df_filtrado["Motivo"] = df_filtrado.apply(_motivo, axis=1)
+                        df_filtrado["Conta"] = df_filtrado["account"]
+                        df_filtrado["Mês/Ano"] = df_filtrado["competencia"].map(comp_labels).fillna(
+                            df_filtrado["competencia"]
+                        )
+                        df_filtrado["Data"] = df_filtrado["date"].dt.strftime("%d/%m/%Y")
+                        df_filtrado["Descrição"] = df_filtrado["description"].astype(str)
+                        df_filtrado["Categoria/Subcategoria"] = df_filtrado["cat_sub"].fillna("Nenhuma")
+                        df_filtrado["Valor numérico"] = df_filtrado["valor_float"]
+                        df_filtrado["Valor (R$)"] = df_filtrado["valor_float"].map(brl_fmt)
+                        df_filtrado["Ocorrências (descrição)"] = df_filtrado["qtd_desc"]
+                        df_filtrado["Ocorrências (valor)"] = df_filtrado["qtd_valor"]
+
+                        df_filtrado.rename(columns={"id": "ID"}, inplace=True)
+
+                        cols_display = [
+                            "ID",
+                            "Conta",
+                            "Mês/Ano",
+                            "Data",
+                            "Descrição",
+                            "Valor (R$)",
+                            "Valor numérico",
+                            "Categoria/Subcategoria",
+                            "Motivo",
+                            "Ocorrências (descrição)",
+                            "Ocorrências (valor)",
+                        ]
+
+                        df_display = df_filtrado[cols_display].copy()
+                        df_display["ID"] = pd.to_numeric(df_display["ID"], errors="coerce").fillna(0).astype(int)
+
+                        st.caption(
+                            f"{len(df_display)} lançamento(s) com possíveis duplicidades para os filtros atuais."
+                        )
+
+                        st.session_state.setdefault("grid_dup_refresh", 0)
+                        grid_key = f"grid_dup_{st.session_state['grid_dup_refresh']}"
+
+                        gb = GridOptionsBuilder.from_dataframe(df_display)
+                        gb.configure_default_column(
+                            editable=False,
+                            sortable=True,
+                            filter=True,
+                            resizable=True,
+                            wrapText=True,
+                            autoHeight=True,
+                        )
+                        gb.configure_selection("multiple", use_checkbox=True, header_checkbox=True)
+                        gb.configure_column("Valor numérico", hide=True)
+
+                        grid_response = AgGrid(
+                            df_display,
+                            gridOptions=gb.build(),
+                            update_mode=GridUpdateMode.SELECTION_CHANGED,
+                            data_return_mode="AS_INPUT",
+                            fit_columns_on_grid_load=True,
+                            height=420,
+                            theme="balham",
+                            key=grid_key,
+                        )
+
+                        selected_ids: list[int] = []
+                        selected_rows = grid_response.get("selected_rows", [])
+                        if isinstance(selected_rows, pd.DataFrame) and "ID" in selected_rows.columns:
+                            id_series = pd.to_numeric(selected_rows["ID"], errors="coerce").dropna()
+                            selected_ids = id_series.astype(int).tolist()
+                        elif isinstance(selected_rows, list):
+                            raw_ids = [row.get("ID") for row in selected_rows if isinstance(row, dict)]
+                            id_series = pd.to_numeric(pd.Series(raw_ids), errors="coerce").dropna()
+                            selected_ids = id_series.astype(int).tolist()
+
+                        col_actions = st.columns([1, 2])
+                        with col_actions[0]:
+                            if st.button("🗑️ Excluir selecionados", key="btn_delete_dups"):
+                                if not selected_ids:
+                                    st.info("Selecione pelo menos um lançamento para excluir.")
+                                else:
+                                    cursor.executemany(
+                                        "DELETE FROM transactions WHERE id=?",
+                                        [(int(id_),) for id_ in selected_ids],
+                                    )
+                                    conn.commit()
+                                    st.warning(f"{len(selected_ids)} lançamento(s) excluído(s) com sucesso.")
+                                    st.session_state["grid_dup_refresh"] += 1
+                                    st.rerun()
+
     # ---- CONTAS ----
-    with tab2:
+    with tab_contas:
         st.subheader("Gerenciar Contas")
         cursor.execute("SELECT id, nome, dia_vencimento FROM contas ORDER BY nome")
         df_contas = pd.DataFrame(cursor.fetchall(), columns=["ID", "Conta", "Dia Vencimento"])
@@ -2043,7 +2250,7 @@ elif menu == "Configurações":
                     st.error("Conta já existe")
 
     # ---- CATEGORIAS ----
-    with tab3:
+    with tab_categorias:
         st.subheader("Gerenciar Categorias")
     
         tipos_possiveis = ["Despesa Fixa", "Despesa Variável", "Investimento", "Receita", "Neutra"]
@@ -2099,7 +2306,7 @@ elif menu == "Configurações":
                 st.error("Categoria já existe")
 
     # ---- SUBCATEGORIAS ----
-    with tab4:
+    with tab_subcategorias:
         st.subheader("Gerenciar Subcategorias")
         cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
         categorias_opts = cursor.fetchall()
@@ -2149,87 +2356,87 @@ elif menu == "Configurações":
                         st.rerun()
                     except sqlite3.IntegrityError:
                         st.error("Já existe essa subcategoria")
-        with tab5:
-            st.subheader("🛠️ SQL Console (avançado)")
-            
-            query = st.text_area("Digite sua consulta SQL (somente SELECT):", height=120)
-        
-            if st.button("Executar consulta"):
-                if not query.strip().lower().startswith("select"):
-                    st.error("⚠️ Só é permitido SELECT por segurança.")
-                else:
-                    try:
-                        df_query = pd.read_sql_query(query, conn)
-                        if df_query.empty:
-                            st.info("Consulta executada, mas não retornou dados.")
-                        else:
-                            st.dataframe(df_query, use_container_width=True)
-                    except Exception as e:
-                        st.error(f"Erro ao executar: {e}")
-        
-            st.markdown("---")
-            st.subheader("📌 Parcelas Futuras")
-            
-            if st.button("Gerar parcelas futuras"):
-                from dateutil.relativedelta import relativedelta
-                c = conn.cursor()
-            
-                rows = c.execute("""
-                    SELECT id, date, description, value, account, subcategoria_id, parcela_atual, parcelas_totais, orig_date, import_seq
-                    FROM transactions
-                    WHERE parcelas_totais > 1
-                    ORDER BY account, description, parcela_atual
-                """).fetchall()
+    with tab_sql:
+        st.subheader("🛠️ SQL Console (avançado)")
 
-                inseridos = 0
-                for (id_, dt_str, desc, val, conta, sub_id, p_atual, p_total, orig_dt, seq_import) in rows:
-                    try:
-                        dt_base = datetime.strptime(dt_str, "%Y-%m-%d").date()
-                    except Exception:
+        query = st.text_area("Digite sua consulta SQL (somente SELECT):", height=120)
+
+        if st.button("Executar consulta"):
+            if not query.strip().lower().startswith("select"):
+                st.error("⚠️ Só é permitido SELECT por segurança.")
+            else:
+                try:
+                    df_query = pd.read_sql_query(query, conn)
+                    if df_query.empty:
+                        st.info("Consulta executada, mas não retornou dados.")
+                    else:
+                        st.dataframe(df_query, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Erro ao executar: {e}")
+
+        st.markdown("---")
+        st.subheader("📌 Parcelas Futuras")
+
+        if st.button("Gerar parcelas futuras"):
+            from dateutil.relativedelta import relativedelta
+            c = conn.cursor()
+
+            rows = c.execute("""
+                SELECT id, date, description, value, account, subcategoria_id, parcela_atual, parcelas_totais, orig_date, import_seq
+                FROM transactions
+                WHERE parcelas_totais > 1
+                ORDER BY account, description, parcela_atual
+            """).fetchall()
+
+            inseridos = 0
+            for (id_, dt_str, desc, val, conta, sub_id, p_atual, p_total, orig_dt, seq_import) in rows:
+                try:
+                    dt_base = datetime.strptime(dt_str, "%Y-%m-%d").date()
+                except Exception:
+                    continue
+
+                # gera SEM exigir que seja a 1ª parcela
+                for p in range(p_atual + 1, p_total + 1):
+                    nova_data = dt_base + relativedelta(months=(p - p_atual))
+                    desc_nova = _apply_parcela_in_desc(desc, p, p_total)
+
+                    c.execute("""
+                        SELECT 1 FROM transactions
+                        WHERE date=? AND description=? AND value=? AND account=?
+                          AND parcela_atual=? AND parcelas_totais=?
+                          AND COALESCE(orig_date, '') = COALESCE(?, '')
+                          AND COALESCE(import_seq, 1) = ?
+                    """, (
+                        nova_data.strftime("%Y-%m-%d"),
+                        desc_nova,
+                        val,
+                        conta,
+                        p,
+                        p_total,
+                        orig_dt or dt_str,
+                        seq_import or 1,
+                    ))
+                    if c.fetchone():
                         continue
 
-                    # gera SEM exigir que seja a 1ª parcela
-                    for p in range(p_atual + 1, p_total + 1):
-                        nova_data = dt_base + relativedelta(months=(p - p_atual))
-                        desc_nova = _apply_parcela_in_desc(desc, p, p_total)
-            
-                        c.execute("""
-                            SELECT 1 FROM transactions
-                            WHERE date=? AND description=? AND value=? AND account=?
-                              AND parcela_atual=? AND parcelas_totais=?
-                              AND COALESCE(orig_date, '') = COALESCE(?, '')
-                              AND COALESCE(import_seq, 1) = ?
-                        """, (
-                            nova_data.strftime("%Y-%m-%d"),
-                            desc_nova,
-                            val,
-                            conta,
-                            p,
-                            p_total,
-                            orig_dt or dt_str,
-                            seq_import or 1,
-                        ))
-                        if c.fetchone():
-                            continue
+                    orig_base = orig_dt or dt_str
+                    seq_base = seq_import or 1
+                    c.execute("""
+                        INSERT INTO transactions
+                            (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais, orig_date, import_seq)
+                        VALUES (?, ?, ?, ?, ?, 'final', ?, ?, ?, ?)
+                    """, (
+                        nova_data.strftime("%Y-%m-%d"),
+                        desc_nova,
+                        val,
+                        conta,
+                        sub_id,
+                        p,
+                        p_total,
+                        orig_base,
+                        seq_base
+                    ))
+                    inseridos += 1
 
-                        orig_base = orig_dt or dt_str
-                        seq_base = seq_import or 1
-                        c.execute("""
-                            INSERT INTO transactions
-                                (date, description, value, account, subcategoria_id, status, parcela_atual, parcelas_totais, orig_date, import_seq)
-                            VALUES (?, ?, ?, ?, ?, 'final', ?, ?, ?, ?)
-                        """, (
-                            nova_data.strftime("%Y-%m-%d"),
-                            desc_nova,
-                            val,
-                            conta,
-                            sub_id,
-                            p,
-                            p_total,
-                            orig_base,
-                            seq_base
-                        ))
-                        inseridos += 1
-            
-                conn.commit()
-                st.success(f"{inseridos} parcelas futuras geradas/atualizadas com sucesso!")
+            conn.commit()
+            st.success(f"{inseridos} parcelas futuras geradas/atualizadas com sucesso!")
