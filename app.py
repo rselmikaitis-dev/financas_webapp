@@ -297,6 +297,28 @@ def deduplicar_transactions(conn) -> int:
     return removidos
 
 
+def _apply_parcela_in_desc(desc: str, p: int, total: int) -> str:
+    """Garante que a descrição contenha a indicação correta da parcela."""
+
+    s = str(desc or "")
+
+    # 1) tenta substituir padrões "3/10"
+    def _repl_bar(m):
+        return f"{m.group(1)}{p}/{total}{m.group(4)}"
+
+    s2, n = re.subn(r"(\b)(\d+)\s*/\s*(\d+)(\b)", _repl_bar, s)
+
+    # 2) senão, tenta "Parcela 3 de 10"
+    if n == 0:
+        s2, n = re.subn(r"(?i)\bparcela\s*\d+\s*de\s*\d+\b", f"Parcela {p} de {total}", s2)
+
+    # 3) se nada foi encontrado, anexa " (3/10)" ao final
+    if n == 0:
+        s2 = f"{s2} ({p}/{total})"
+
+    return s2
+
+
 def corrigir_descricoes_parcelas(conn) -> int:
     """Padroniza descrições de parcelas existentes para refletirem a parcela correta."""
 
@@ -558,25 +580,6 @@ def sugerir_subcategoria(descricao: str, hist: dict, limiar: int = 80):
     if sub_id:
         st.session_state["last_classif"][desc_norm] = resultado
     return resultado
-# Atualiza/insere marcador de parcela na descrição
-def _apply_parcela_in_desc(desc: str, p: int, total: int) -> str:
-    s = str(desc or "")
-
-    # 1) tenta substituir padrões "3/10"
-    def _repl_bar(m):
-        return f"{m.group(1)}{p}/{total}{m.group(4)}"
-    s2, n = re.subn(r"(\b)(\d+)\s*/\s*(\d+)(\b)", _repl_bar, s)
-
-    # 2) senão, tenta "Parcela 3 de 10"
-    if n == 0:
-        s2, n = re.subn(r"(?i)\bparcela\s*\d+\s*de\s*\d+\b", f"Parcela {p} de {total}", s2)
-
-    # 3) se nada foi encontrado, anexa " (3/10)" ao final
-    if n == 0:
-        s2 = f"{s2} ({p}/{total})"
-
-    return s2
-
 # =====================
 # MENU
 # =====================
