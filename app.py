@@ -281,7 +281,7 @@ def deduplicar_transactions(conn) -> int:
                         COALESCE(parcela_atual, 1),
                         COALESCE(parcelas_totais, 1),
                         COALESCE(import_seq, 1),
-                        COALESCE(orig_date, '')
+                        COALESCE(NULLIF(orig_date, ''), date, '')
                     ORDER BY id
                 ) AS rn
             FROM transactions
@@ -295,6 +295,52 @@ def deduplicar_transactions(conn) -> int:
     if removidos:
         conn.commit()
     return removidos
+
+
+def corrigir_descricoes_parcelas(conn) -> int:
+    """Padroniza descrições de parcelas existentes para refletirem a parcela correta."""
+
+    cursor = conn.cursor()
+    rows = cursor.execute(
+        """
+        SELECT id, description, desc_norm, parcela_atual, parcelas_totais
+        FROM transactions
+        WHERE parcelas_totais > 1 AND description IS NOT NULL
+        """
+    ).fetchall()
+
+    atualizados = 0
+    padrao_barra = re.compile(r"\d+\s*/\s*\d+")
+    padrao_texto = re.compile(r"(?i)parcela\s*\d+\s*de\s*\d+")
+
+    for rid, desc, desc_norm_atual, p_atual, p_total in rows:
+        try:
+            p_atual_int = int(p_atual or 0)
+            p_total_int = int(p_total or 0)
+        except (TypeError, ValueError):
+            continue
+
+        if p_total_int < 2 or p_atual_int < 1:
+            continue
+
+        texto = desc or ""
+        if not (padrao_barra.search(texto) or padrao_texto.search(texto)):
+            continue
+
+        nova_desc = _apply_parcela_in_desc(texto, p_atual_int, p_total_int)
+        nova_desc_norm = _normalize_desc(nova_desc)
+
+        if nova_desc != texto or nova_desc_norm != (desc_norm_atual or ""):
+            cursor.execute(
+                "UPDATE transactions SET description=?, desc_norm=? WHERE id=?",
+                (nova_desc, nova_desc_norm, rid),
+            )
+            atualizados += 1
+
+    if atualizados:
+        conn.commit()
+
+    return atualizados
 
 import unicodedata as _ud
 import re as _re
@@ -352,6 +398,14 @@ atualizar_desc_norm(conn)
 removidos = deduplicar_transactions(conn)
 if removidos:
     print(f"[deduplicar_transactions] Removidos {removidos} lançamento(s) duplicado(s)")
+
+# 🔹 Ajusta descrições de parcelas existentes (corrige numeração das parcelas)
+ajustados_descricoes = corrigir_descricoes_parcelas(conn)
+if ajustados_descricoes:
+    print(
+        "[corrigir_descricoes_parcelas] Atualizadas "
+        f"{ajustados_descricoes} descrição(ões) de lançamentos parcelados"
+    )
 
 # 🔹 Cursor pronto
 cursor = conn.cursor()
@@ -1563,6 +1617,11 @@ elif menu == "Importação":
                                         dt_nova = dt_nova.date()
                                     elif isinstance(dt_nova, datetime):
                                         dt_nova = dt_nova.date()
+
+                                    desc_parcela = _apply_parcela_in_desc(desc_original, p, p_total)
+                                    desc_norm_parcela = _normalize_desc(desc_parcela)
+                                    dt_nova_iso = dt_nova.strftime("%Y-%m-%d")
+
                                     cursor.execute(
                                         """
                                             SELECT 1 FROM transactions
@@ -1571,45 +1630,49 @@ elif menu == "Importação":
                                               AND COALESCE(desc_norm, '') = COALESCE(?, '')
                                               AND COALESCE(parcela_atual, 1) = ?
                                               AND COALESCE(parcelas_totais, 1) = ?
-                                              AND COALESCE(orig_date, '') = COALESCE(?, '')
+                                              AND COALESCE(NULLIF(orig_date, ''), date, '') = COALESCE(NULLIF(?, ''), ?, '')
                                               AND COALESCE(import_seq, 1) = ?
                                         """,
                                         (
                                             conta_sel,
-                                            dt_nova.strftime("%Y-%m-%d"),
+                                            dt_nova_iso,
                                             valor_final,
-                                            desc_norm,
+                                            desc_norm_parcela,
+                                            p,
+                                            p_total,
+                                            data_original_iso,
+                                            dt_nova_iso,
+                                            seq_import,
+                                        ),
+                                    )
+                                    if cursor.fetchone():
+                                        log_entries.append(
+                                            f"[Ignorado] Parcela {p}/{p_total} de '{desc_parcela}' em {dt_nova.strftime('%d/%m/%Y')} – já existe"
+                                        )
+                                        continue
+
+                                    cursor.execute(
+                                        """
+                                        INSERT INTO transactions
+                                            (date, description, desc_norm, value, account, subcategoria_id, status, parcela_atual, parcelas_totais, orig_date, import_seq)
+                                        VALUES (?, ?, ?, ?, ?, ?, 'final', ?, ?, ?, ?)
+                                    """,
+                                        (
+                                            dt_nova_iso,
+                                            desc_parcela,
+                                            desc_norm_parcela,
+                                            valor_final,
+                                            conta_sel,
+                                            sub_id,
                                             p,
                                             p_total,
                                             data_original_iso,
                                             seq_import,
                                         ),
                                     )
-                                    if cursor.fetchone():
-                                        log_entries.append(
-                                            f"[Ignorado] Parcela {p}/{p_total} de '{desc_original}' em {dt_nova.strftime('%d/%m/%Y')} – já existe"
-                                        )
-                                        continue
-
-                                    cursor.execute("""
-                                        INSERT INTO transactions
-                                            (date, description, desc_norm, value, account, subcategoria_id, status, parcela_atual, parcelas_totais, orig_date, import_seq)
-                                        VALUES (?, ?, ?, ?, ?, ?, 'final', ?, ?, ?, ?)
-                                    """, (
-                                        dt_nova.strftime("%Y-%m-%d"),
-                                        desc_original,
-                                        desc_norm,
-                                        valor_final,
-                                        conta_sel,
-                                        sub_id,
-                                        p,
-                                        p_total,
-                                        data_original_iso,
-                                        seq_import,
-                                    ))
                                     inserted += 1
                                     log_entries.append(
-                                        f"[Importado] Parcela {p}/{p_total} de '{desc_original}' em {dt_nova.strftime('%d/%m/%Y')} – valor {valor_final:.2f}"
+                                        f"[Importado] Parcela {p}/{p_total} de '{desc_parcela}' em {dt_nova.strftime('%d/%m/%Y')} – valor {valor_final:.2f}"
                                     )
 
                         conn.commit()
