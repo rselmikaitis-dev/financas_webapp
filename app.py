@@ -35,7 +35,7 @@ def get_setting(key: str, default=None):
 AUTH_USERNAME = get_setting("AUTH_USERNAME", "rafael")
 AUTH_PASSWORD_BCRYPT = get_setting(
     "AUTH_PASSWORD_BCRYPT",
-    "$2b$12$abcdefghijklmnopqrstuv1234567890abcdefghijklmnopqrstuv12"
+    "$2b$12$nzrfGY9aScXO5A.DBYIcS.zVnR6yyBuerMIK0.No4EEiVSEB1yNBS"
 )
 AUTH_PASSWORD_PLAIN = get_setting("AUTH_PASSWORD_PLAIN")
 
