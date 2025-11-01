@@ -1221,6 +1221,41 @@ elif menu == "Importação":
                         lambda s: datetime.strptime(s, "%Y-%m-%d").strftime("%d/%m/%Y") if s else ""
                     )
 
+                    def _coerce_row_date(row):
+                        """Try multiple columns from the grid to recover the launch date."""
+
+                        candidates = (
+                            row.get("Data"),
+                            row.get("data_original_iso"),
+                            row.get("Data original"),
+                            row.get("Data efetiva"),
+                        )
+
+                        for cand in candidates:
+                            if isinstance(cand, pd.Timestamp):
+                                return cand.date()
+                            if isinstance(cand, datetime):
+                                return cand.date()
+                            if isinstance(cand, date):
+                                return cand
+
+                            if cand is None:
+                                continue
+
+                            text = str(cand).strip()
+                            if not text or text.lower() in {"nat", "nan"}:
+                                continue
+
+                            parsed = parse_date(text)
+                            if isinstance(parsed, pd.Timestamp):
+                                return parsed.date()
+                            if isinstance(parsed, datetime):
+                                return parsed.date()
+                            if isinstance(parsed, date):
+                                return parsed
+
+                        return pd.NaT
+
                     # Se for cartão → ajusta data
                     if eh_cartao and mes_ref_cc and ano_ref_cc:
                         from calendar import monthrange
@@ -1509,6 +1544,9 @@ elif menu == "Importação":
                             seq_import = _safe_int(r.get("seq_import", 1))
 
                             sub_id_manual = _safe_sub_id(r.get("sub_id_sugerido", None))
+                            row_date = _coerce_row_date(r)
+                            if not data_original_iso and isinstance(row_date, date):
+                                data_original_iso = row_date.strftime("%Y-%m-%d")
 
                             if eh_cartao and mes_ref_cc and ano_ref_cc:
                                 dia_final = min(dia_venc_cc or 1, monthrange(ano_ref_cc, mes_ref_cc)[1])
@@ -1522,7 +1560,7 @@ elif menu == "Importação":
                                     valor_final = abs(val_float)
                                     sub_id = sub_id_manual
                             else:
-                                dt_base = r["Data"] if isinstance(r["Data"], date) else parse_date(r["Data"])
+                                dt_base = row_date
                                 sub_id = sub_id_manual
                                 valor_final = val_float
 
