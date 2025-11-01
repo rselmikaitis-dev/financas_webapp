@@ -4,6 +4,8 @@ Web app em **Streamlit** com **login (bcrypt)** para importar extratos de **cont
 
 ## Autenticação (um usuário)
 
+- Credenciais padrão para testes locais (`data.db` inicial): usuário `rafael` e senha `Naomi!@05`.
+
 - Configure no **Streamlit Cloud** em `Secrets`:
   - `AUTH_USERNAME`: seu usuário (ex.: `rafael`)
   - `AUTH_PASSWORD_BCRYPT`: hash bcrypt da sua senha
