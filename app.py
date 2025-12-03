@@ -515,6 +515,45 @@ def is_cartao_credito(nome_conta: str) -> bool:
     s = unicodedata.normalize("NFKD", str(nome_conta)).encode("ASCII", "ignore").decode().lower().strip()
     return s.startswith("cartao de credito")
 
+
+def _coerce_valor_series(series: pd.Series) -> pd.Series:
+    """Convert a column of currency-like values into floats.
+
+    Handles numbers represented with decimal commas ("1.234,56"), currency
+    prefixes ("R$ "), and whitespace. Non-parsable entries become ``NaN`` so
+    they can be safely replaced with ``0`` by the caller.
+    """
+
+    if series.empty:
+        return pd.Series(dtype=float)
+
+    if pd.api.types.is_numeric_dtype(series):
+        return pd.to_numeric(series, errors="coerce")
+
+    def _normalize_value(value):
+        if pd.isna(value):
+            return None
+
+        text = str(value).strip()
+        if not text:
+            return None
+
+        text = re.sub(r"[R$\s]", "", text)
+
+        if text.count(",") == 1 and text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "")
+            text = text.replace(",", ".")
+        else:
+            text = text.replace(",", "")
+
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    normalized = series.map(_normalize_value)
+    return pd.to_numeric(normalized, errors="coerce")
+
 # === Auto-classificação por similaridade (opcional) ===
 # Requer: rapidfuzz (adicione em requirements.txt)
 try:
@@ -1035,7 +1074,7 @@ elif menu == "Lançamentos":
 
     valores_series = pd.Series(dtype=float)
     if not df_totais.empty and "Valor" in df_totais.columns:
-        valores_series = pd.to_numeric(df_totais["Valor"], errors="coerce").fillna(0.0)
+        valores_series = _coerce_valor_series(df_totais["Valor"]).fillna(0.0)
 
     entradas = valores_series[valores_series > 0].sum()
     saidas_abs = abs(valores_series[valores_series < 0].sum())
