@@ -1076,9 +1076,7 @@ elif menu == "Lançamentos":
     if not df_totais.empty and "Valor" in df_totais.columns:
         valores_series = _coerce_valor_series(df_totais["Valor"]).fillna(0.0)
 
-    entradas = valores_series[valores_series > 0].sum()
-    saidas_abs = abs(valores_series[valores_series < 0].sum())
-    total_liquido = entradas - saidas_abs
+    soma_valores = valores_series.sum()
 
     if not grid_has_client_data and df_totais.empty:
         displayed_count = len(dfv_display)
@@ -1090,9 +1088,7 @@ elif menu == "Lançamentos":
         + " | ".join(
             [
                 f"Total de lançamentos exibidos: {displayed_count}",
-                f"Entradas: {brl_fmt(entradas)}",
-                f"Saídas: {brl_fmt(saidas_abs)}",
-                f"Resultado líquido: {brl_fmt(total_liquido)}",
+                f"Soma dos valores exibidos: {brl_fmt(soma_valores)}",
             ]
         )
         + "**"
