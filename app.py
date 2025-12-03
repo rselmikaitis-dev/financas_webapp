@@ -1060,17 +1060,12 @@ elif menu == "Lançamentos":
         )
 
     # ----- TOTAL E SOMA -----
+    # Usa exatamente os lançamentos exibidos para que a soma reflita o que o usuário vê
+    # (sem excluir transferências automaticamente).
     if grid_has_client_data:
         df_totais = df_grid_filtered.copy()
-        if "Categoria/Subcategoria" in df_totais.columns:
-            mask_transfer = df_totais["Categoria/Subcategoria"].str.startswith(
-                "Transferências", na=False
-            )
-            df_totais = df_totais[~mask_transfer]
     else:
         df_totais = dfv.copy()
-        if "Categoria" in df_totais.columns:
-            df_totais = df_totais[df_totais["Categoria"] != "Transferências"]
 
     valores_series = pd.Series(dtype=float)
     if not df_totais.empty and "Valor" in df_totais.columns:
