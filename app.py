@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 from streamlit_option_menu import option_menu
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
+from openai import OpenAI
 
 st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="wide")
 
@@ -38,6 +39,11 @@ AUTH_PASSWORD_BCRYPT = get_setting(
     "$2b$12$nzrfGY9aScXO5A.DBYIcS.zVnR6yyBuerMIK0.No4EEiVSEB1yNBS"
 )
 AUTH_PASSWORD_PLAIN = get_setting("AUTH_PASSWORD_PLAIN")
+
+AI_MODEL = get_setting("OPENAI_MODEL", "gpt-4o-mini")
+AI_BASE_URL = get_setting("OPENAI_BASE_URL")
+AI_TEMPERATURE = float(get_setting("OPENAI_TEMPERATURE", 0.2))
+AI_CONTEXT_ROWS = int(get_setting("AI_CONTEXT_ROWS", 120))
 
 
 def ensure_users_table(conn: sqlite3.Connection) -> None:
@@ -554,6 +560,122 @@ def _coerce_valor_series(series: pd.Series) -> pd.Series:
     normalized = series.map(_normalize_value)
     return pd.to_numeric(normalized, errors="coerce")
 
+
+def get_openai_client(api_key: str | None = None) -> OpenAI | None:
+    api_key = api_key or get_setting("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    kwargs = {"api_key": api_key}
+    if AI_BASE_URL:
+        kwargs["base_url"] = AI_BASE_URL
+    return OpenAI(**kwargs)
+
+
+def _format_group_totals(series: pd.Series, top_n: int = 8) -> str:
+    if series.empty:
+        return "- Nenhum dado disponível"
+
+    ordered = series.sort_values(key=lambda s: s.abs(), ascending=False).head(top_n)
+    linhas = [f"- {nome}: {brl_fmt(float(valor))}" for nome, valor in ordered.items()]
+    return "\n".join(linhas)
+
+
+def _format_recent_transactions(df: pd.DataFrame, limit_rows: int) -> str:
+    if df.empty:
+        return "- Nenhum lançamento disponível"
+
+    df_sorted = df.sort_values("date", ascending=False).head(limit_rows)
+    linhas = []
+    for _, row in df_sorted.iterrows():
+        data_fmt = pd.to_datetime(row["date"], errors="coerce")
+        data_str = data_fmt.strftime("%Y-%m-%d") if not pd.isna(data_fmt) else "?"
+        categoria = str(row.get("categoria") or "Sem categoria")
+        subcat = str(row.get("subcategoria") or "Sem subcategoria")
+        linhas.append(
+            f"- {data_str} | {row.get('description', '')} | {brl_fmt(float(row.get('value', 0)))} | {categoria} / {subcat}"
+        )
+    return "\n".join(linhas)
+
+
+def build_finance_context(df: pd.DataFrame, limit_rows: int = AI_CONTEXT_ROWS) -> str:
+    if df.empty:
+        return "Nenhum lançamento registrado."
+
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+    df_valid = df.dropna(subset=["date", "value"])
+    total_geral = float(df_valid["value"].sum())
+
+    df_valid["competencia"] = df_valid["date"].dt.to_period("M")
+    mensal = (
+        df_valid.groupby("competencia")["value"].sum().sort_index().tail(6)
+    )
+
+    categorias = (
+        df_valid.assign(categoria=df_valid["categoria"].fillna("Sem categoria"))
+        .groupby("categoria")["value"]
+        .sum()
+    )
+    subcategorias = (
+        df_valid.assign(subcategoria=df_valid["subcategoria"].fillna("Sem subcategoria"))
+        .groupby("subcategoria")["value"]
+        .sum()
+    )
+
+    linhas = [
+        f"Total consolidado: {brl_fmt(total_geral)}",
+        "\nÚltimos 6 meses (resultado líquido):",
+        _format_group_totals(mensal, top_n=6),
+        "\nPrincipais categorias:",
+        _format_group_totals(categorias),
+        "\nPrincipais subcategorias:",
+        _format_group_totals(subcategorias),
+        "\nLançamentos recentes:",
+        _format_recent_transactions(df_valid, limit_rows),
+    ]
+
+    return "\n".join(linhas)
+
+
+def run_finance_ai(
+    user_question: str,
+    df: pd.DataFrame,
+    history: list[dict[str, str]] | None = None,
+    api_key: str | None = None,
+) -> str:
+    client = get_openai_client(api_key)
+    if client is None:
+        raise RuntimeError(
+            "Configure OPENAI_API_KEY em Secrets ou informe manualmente sua chave para usar o assistente."
+        )
+
+    context = build_finance_context(df)
+    trimmed_history = (history or [])[-8:]
+
+    messages: list[dict[str, str]] = [
+        {
+            "role": "system",
+            "content": (
+                "Você é um assistente financeiro em português. Responda somente usando os dados fornecidos no "
+                "bloco 'Contexto dos lançamentos'. Se não houver informação suficiente, explique isso. "
+                "Mostre valores em reais e mantenha a resposta concisa."
+            ),
+        },
+        {"role": "system", "content": f"Contexto dos lançamentos:\n{context}"},
+        *trimmed_history,
+        {"role": "user", "content": user_question},
+    ]
+
+    completion = client.chat.completions.create(
+        model=AI_MODEL,
+        messages=messages,
+        temperature=AI_TEMPERATURE,
+        max_tokens=500,
+    )
+    return (completion.choices[0].message.content or "").strip()
+
 # === Auto-classificação por similaridade (opcional) ===
 # Requer: rapidfuzz (adicione em requirements.txt)
 try:
@@ -625,9 +747,9 @@ def sugerir_subcategoria(descricao: str, hist: dict, limiar: int = 80):
 with st.sidebar:
     menu = option_menu(
         "Menu",
-        ["Dashboard", "Lançamentos", "Importação", "Planejamento", "Configurações"],
+        ["Dashboard", "Assistente IA", "Lançamentos", "Importação", "Planejamento", "Configurações"],
         menu_icon=None,
-        icons=["", "", "", "", ""],
+        icons=["", "", "", "", "", ""],
         default_index=0
     )
 
@@ -885,6 +1007,81 @@ if menu == "Dashboard":
                         df_listagem[["Data", "Descrição", "Valor (R$)", "Conta", "Categoria", "Subcategoria"]],
                         use_container_width=True
                     )
+
+# =====================
+# ASSISTENTE IA
+# =====================
+elif menu == "Assistente IA":
+    st.header("🤖 Assistente das Finanças")
+
+    if "ai_history" not in st.session_state:
+        st.session_state["ai_history"] = []
+
+    df_lanc = read_table_transactions(conn)
+
+    st.markdown(
+        "Converse sobre seus lançamentos. As respostas são geradas a partir dos dados presentes na base (categorias, "
+        "subcategorias, valores e datas)."
+    )
+
+    col_cfg1, col_cfg2 = st.columns([2, 1])
+    with col_cfg1:
+        st.caption(
+            "O contexto inclui os últimos lançamentos e totais por categoria. Quanto mais completa a classificação, "
+            "melhores serão as respostas."
+        )
+    with col_cfg2:
+        if st.button("Limpar conversa", type="secondary"):
+            st.session_state["ai_history"] = []
+            st.rerun()
+
+    api_key_default = get_setting("OPENAI_API_KEY", "") or ""
+    api_key_input = st.text_input(
+        "Chave da API OpenAI",
+        type="password",
+        value=st.session_state.get("ai_api_key", api_key_default),
+        help="A chave é armazenada apenas nesta sessão do navegador.",
+    )
+    if api_key_input:
+        st.session_state["ai_api_key"] = api_key_input.strip()
+
+    effective_api_key = st.session_state.get("ai_api_key") or api_key_default
+    chat_disabled = not effective_api_key
+
+    if df_lanc.empty:
+        st.info("Nenhum lançamento encontrado. Importe dados para conversar com o assistente.")
+
+    if chat_disabled:
+        st.warning("Informe sua chave da OpenAI para ativar o assistente.")
+
+    for msg in st.session_state["ai_history"]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    prompt = st.chat_input(
+        "Faça uma pergunta sobre suas finanças (ex.: 'quanto gastei com mercado no último mês?')",
+        disabled=chat_disabled,
+    )
+
+    if prompt:
+        history_for_llm = st.session_state["ai_history"].copy()
+        st.session_state["ai_history"].append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Consultando seus dados..."):
+                try:
+                    answer = run_finance_ai(
+                        prompt,
+                        df_lanc,
+                        history=history_for_llm,
+                        api_key=effective_api_key,
+                    )
+                except Exception as exc:
+                    answer = f"Não foi possível gerar a resposta agora: {exc}"
+                st.markdown(answer)
+        st.session_state["ai_history"].append({"role": "assistant", "content": answer})
 
 # =====================
 # LANÇAMENTOS
